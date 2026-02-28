@@ -218,6 +218,15 @@ menu_layout :: proc(ctx: ^Context, menu: ^Menu) {
 	menu.button.pos = Vec2{200, 40}
 }
 
+Cell :: struct {
+	col, row: i32,
+}
+
+game_cell_to_world_pos :: proc(game: ^Game, cell: Cell) -> (world: Vec2) {
+	world.xy = game.pos + Vec2{f32(cell.col), f32(cell.row)} * f32(game.cell_size)
+	return
+}
+
 TetrominoType :: enum {
 	None,
 	I,
@@ -229,27 +238,208 @@ TetrominoType :: enum {
 	Z,
 }
 
-Game :: struct {
-	using _:         Rect,
-	cell_size:       Vec2,
-	cells:           Vec2,
-	//
-	last_update_at:  f64,
-	tetromino:       TetrominoType,
-	projection:      [4]Vec2,
-	tetromino_cells: [4]Vec2,
-	filled_cells:    [][]bool,
+Tetromino :: struct {
+	using _: Cell,
+	state:   u8,
+	type:    TetrominoType,
+	cells:   [16]u8,
+	color:   SDL.Color,
 }
 
-game_init :: proc(ctx: ^Context, game: ^Game) {
-	game.cells = Vec2{10, 20}
-	game.cell_size = Vec2{20, 20}
-	game.size = game.cells * game.cell_size
+tetromino_init :: proc(tetromino: ^Tetromino) {
+	tetromino.col = 0
+	tetromino.row = 0
+	tetromino.state = 0
 
-	game.filled_cells = make([][]bool, int(game.cells.y))
-	for &row in game.filled_cells {
-		row = make([]bool, int(game.cells.x))
+	choices := [?]TetrominoType{.I, .O, .T, .J, .L, .S, .Z}
+	tetromino.type = rand.choice(choices[:])
+
+	switch tetromino.type {
+	case .None:
+	case .I:
+		tetromino.color = SDL.Color{100, 100, 200, 255}
+	case .O:
+		tetromino.color = SDL.Color{255, 220, 50, 255}
+	case .T:
+		tetromino.color = SDL.Color{215, 43, 251, 255}
+	case .J:
+		tetromino.color = SDL.Color{43, 131, 251, 255}
+	case .L:
+		tetromino.color = SDL.Color{251, 177, 43, 255}
+	case .S:
+		tetromino.color = SDL.Color{43, 251, 97, 255}
+	case .Z:
+		tetromino.color = SDL.Color{251, 43, 63, 255}
 	}
+
+	tetromino_set_cells(tetromino)
+}
+
+tetromino_switch_state :: proc(tetromino: ^Tetromino) {
+	tetromino.state += 1
+	tetromino.state %= 4
+
+	tetromino_set_cells(tetromino)
+}
+
+tetromino_game_cell :: proc(tetromino: ^Tetromino, i: int) -> (c: Cell) {
+	c.col = tetromino.col + i32(i) % 4
+	c.row = tetromino.row + i32(i) / 4
+	return
+}
+
+cell_to_game_cell_idx :: proc(game: ^Game, cell: Cell) -> int {
+	return int(cell.row * i32(game.cols) + cell.col)
+}
+
+tetromino_set_cells :: proc(tetromino: ^Tetromino) {
+	t := &tetromino.cells
+	state := tetromino.state
+
+	switch tetromino.type {
+	case .I:
+		switch state {
+		case 0, 2:
+			t[+0], t[+1], t[+2], t[+3] = 1, 1, 1, 1
+			t[+4], t[+5], t[+6], t[+7] = 0, 0, 0, 0
+			t[+8], t[+9], t[10], t[11] = 0, 0, 0, 0
+			t[12], t[13], t[14], t[15] = 0, 0, 0, 0
+		case 1, 3:
+			t[+0], t[+1], t[+2], t[+3] = 0, 1, 0, 0
+			t[+4], t[+5], t[+6], t[+7] = 0, 1, 0, 0
+			t[+8], t[+9], t[10], t[11] = 0, 1, 0, 0
+			t[12], t[13], t[14], t[15] = 0, 1, 0, 0
+		}
+	case .O:
+		t[+0], t[+1], t[+2], t[+3] = 1, 1, 0, 0
+		t[+4], t[+5], t[+6], t[+7] = 1, 1, 0, 0
+		t[+8], t[+9], t[10], t[11] = 0, 0, 0, 0
+		t[12], t[13], t[14], t[15] = 0, 0, 0, 0
+	case .T:
+		switch state {
+		case 0:
+			t[+0], t[+1], t[+2], t[+3] = 0, 1, 0, 0
+			t[+4], t[+5], t[+6], t[+7] = 1, 1, 1, 0
+			t[+8], t[+9], t[10], t[11] = 0, 0, 0, 0
+			t[12], t[13], t[14], t[15] = 0, 0, 0, 0
+		case 1:
+			t[+0], t[+1], t[+2], t[+3] = 0, 1, 0, 0
+			t[+4], t[+5], t[+6], t[+7] = 1, 1, 0, 0
+			t[+8], t[+9], t[10], t[11] = 0, 1, 0, 0
+			t[12], t[13], t[14], t[15] = 0, 0, 0, 0
+		case 2:
+			t[+0], t[+1], t[+2], t[+3] = 0, 0, 0, 0
+			t[+4], t[+5], t[+6], t[+7] = 1, 1, 1, 0
+			t[+8], t[+9], t[10], t[11] = 0, 1, 0, 0
+			t[12], t[13], t[14], t[15] = 0, 0, 0, 0
+		case 3:
+			t[+0], t[+1], t[+2], t[+3] = 0, 1, 0, 0
+			t[+4], t[+5], t[+6], t[+7] = 0, 1, 1, 0
+			t[+8], t[+9], t[10], t[11] = 0, 1, 0, 0
+			t[12], t[13], t[14], t[15] = 0, 0, 0, 0
+		}
+	case .J:
+		switch state {
+		case 0:
+			t[+0], t[+1], t[+2], t[+3] = 0, 1, 0, 0
+			t[+4], t[+5], t[+6], t[+7] = 0, 1, 0, 0
+			t[+8], t[+9], t[10], t[11] = 1, 1, 0, 0
+			t[12], t[13], t[14], t[15] = 0, 0, 0, 0
+		case 1:
+			t[+0], t[+1], t[+2], t[+3] = 1, 0, 0, 0
+			t[+4], t[+5], t[+6], t[+7] = 1, 1, 1, 0
+			t[+8], t[+9], t[10], t[11] = 0, 0, 0, 0
+			t[12], t[13], t[14], t[15] = 0, 0, 0, 0
+		case 2:
+			t[+0], t[+1], t[+2], t[+3] = 0, 1, 1, 0
+			t[+4], t[+5], t[+6], t[+7] = 0, 1, 0, 0
+			t[+8], t[+9], t[10], t[11] = 0, 1, 0, 0
+			t[12], t[13], t[14], t[15] = 0, 0, 0, 0
+		case 3:
+			t[+0], t[+1], t[+2], t[+3] = 0, 0, 0, 0
+			t[+4], t[+5], t[+6], t[+7] = 1, 1, 1, 0
+			t[+8], t[+9], t[10], t[11] = 0, 0, 1, 0
+			t[12], t[13], t[14], t[15] = 0, 0, 0, 0
+		}
+	case .L:
+		switch state {
+		case 0:
+			t[+0], t[+1], t[+2], t[+3] = 0, 1, 0, 0
+			t[+4], t[+5], t[+6], t[+7] = 0, 1, 0, 0
+			t[+8], t[+9], t[10], t[11] = 0, 1, 1, 0
+			t[12], t[13], t[14], t[15] = 0, 0, 0, 0
+		case 1:
+			t[+0], t[+1], t[+2], t[+3] = 0, 0, 0, 0
+			t[+4], t[+5], t[+6], t[+7] = 1, 1, 1, 0
+			t[+8], t[+9], t[10], t[11] = 1, 0, 0, 0
+			t[12], t[13], t[14], t[15] = 0, 0, 0, 0
+		case 2:
+			t[+0], t[+1], t[+2], t[+3] = 1, 1, 0, 0
+			t[+4], t[+5], t[+6], t[+7] = 0, 1, 0, 0
+			t[+8], t[+9], t[10], t[11] = 0, 1, 0, 0
+			t[12], t[13], t[14], t[15] = 0, 0, 0, 0
+		case 3:
+			t[+0], t[+1], t[+2], t[+3] = 0, 0, 1, 0
+			t[+4], t[+5], t[+6], t[+7] = 1, 1, 1, 0
+			t[+8], t[+9], t[10], t[11] = 0, 0, 0, 0
+			t[12], t[13], t[14], t[15] = 0, 0, 0, 0
+		}
+	case .S:
+		switch state {
+		case 0, 2:
+			t[+0], t[+1], t[+2], t[+3] = 0, 0, 0, 0
+			t[+4], t[+5], t[+6], t[+7] = 0, 1, 1, 0
+			t[+8], t[+9], t[10], t[11] = 1, 1, 0, 0
+			t[12], t[13], t[14], t[15] = 0, 0, 0, 0
+		case 1, 3:
+			t[+0], t[+1], t[+2], t[+3] = 1, 0, 0, 0
+			t[+4], t[+5], t[+6], t[+7] = 1, 1, 0, 0
+			t[+8], t[+9], t[10], t[11] = 0, 1, 0, 0
+			t[12], t[13], t[14], t[15] = 0, 0, 0, 0
+		}
+	case .Z:
+		switch state {
+		case 0, 2:
+			t[+0], t[+1], t[+2], t[+3] = 0, 0, 0, 0
+			t[+4], t[+5], t[+6], t[+7] = 1, 1, 0, 0
+			t[+8], t[+9], t[10], t[11] = 0, 1, 1, 0
+			t[12], t[13], t[14], t[15] = 0, 0, 0, 0
+		case 1, 3:
+			t[+0], t[+1], t[+2], t[+3] = 0, 1, 0, 0
+			t[+4], t[+5], t[+6], t[+7] = 1, 1, 0, 0
+			t[+8], t[+9], t[10], t[11] = 1, 0, 0, 0
+			t[12], t[13], t[14], t[15] = 0, 0, 0, 0
+		}
+	case .None:
+	}
+}
+
+GameCell :: struct {
+	color:  SDL.Color,
+	filled: bool,
+}
+
+Game :: struct {
+	using _:        Rect,
+	cols, rows:     int,
+	cell_size:      i32,
+
+	//
+	last_update_at: f64,
+	tetromino:      Tetromino,
+	cells:          []GameCell,
+}
+
+game_init :: proc(ctx: ^Context, game: ^Game, allocator := context.allocator) {
+	cols, rows :: 10, 20
+	cell_size :: 20
+
+	game.cols = cols
+	game.rows = rows
+	game.cell_size = cell_size
+	game.size = Vec2{cols, rows} * Vec2{cell_size, cell_size}
+
+	game.cells = make([]GameCell, cols * rows, allocator = allocator)
 }
 
 game_layout :: proc(ctx: ^Context, game: ^Game) {
@@ -257,40 +447,32 @@ game_layout :: proc(ctx: ^Context, game: ^Game) {
 	game.pos = pos
 }
 
-game_check_collision :: proc(game: ^Game, tcells: []Vec2) -> bool {
-	for tcell in tcells {
-		next_y := int(tcell.y + 1)
+game_check_collision :: proc(game: ^Game, tetromino_cells: [16]u8) -> bool {
+	for c, i in tetromino_cells do if c == 1 {
+		cell := tetromino_game_cell(&game.tetromino, i)
+		cell.row += 1
 
-		if next_y == int(game.cells.y) {
+		if cell.row >= i32(game.rows) {
 			return true
-		} else if next_y >= 0 && next_y < int(game.cells.y) {
-			filled_row := game.filled_cells[next_y]
+		}
 
-			for filled, i in filled_row do if filled {
-				if i == int(tcell.x) {
-					return true
-				}
-			}
+		game_cell_idx := cell_to_game_cell_idx(game, cell)
+		game_cell := game.cells[game_cell_idx]
+		if game_cell.filled {
+			return true
 		}
 	}
 
 	return false
 }
 
-game_move_down :: proc(tcells: []Vec2) {
-	tcells[0].y += 1
-	tcells[1].y += 1
-	tcells[2].y += 1
-	tcells[3].y += 1
-}
-
-game_projection :: proc(game: ^Game) {
-	copy(game.projection[:], game.tetromino_cells[:])
-
-	for !game_check_collision(game, game.projection[:]) {
-		game_move_down(game.projection[:])
-	}
-}
+// game_projection :: proc(game: ^Game) {
+// 	copy(game.projection[:], game.tetromino_cells[:])
+//
+// 	for !game_check_collision(game, game.projection[:]) {
+// 		game_move_down(game.projection[:])
+// 	}
+// }
 
 update :: proc(ctx: ^Context, game: ^Game) {
 	update_timeout :: 0.5
@@ -299,66 +481,34 @@ update :: proc(ctx: ^Context, game: ^Game) {
 		return
 	}
 
-	if game.tetromino == .None {
-		choices := [?]TetrominoType{.I, .O, .T, .J, .L, .S, .Z}
-		game.tetromino = rand.choice(choices[:])
+	if game.tetromino.type == .None {
+		tetromino_init(&game.tetromino)
 
-		switch game.tetromino {
-		case .I:
-			x := f32(rand.int_range(0, int(game.cells.x - 4)))
-			game.tetromino_cells = [4]Vec2{{x, -2}, {x + 1, -2}, {x + 2, -2}, {x + 3, -2}}
-		case .O:
-			x := f32(rand.int_range(0, int(game.cells.x - 2)))
-			game.tetromino_cells = [4]Vec2{{x, -2}, {x + 1, -2}, {x, -1}, {x + 1, -1}}
-		case .T:
-			x := f32(rand.int_range(0, int(game.cells.x - 3)))
-			game.tetromino_cells = [4]Vec2{{x, -2}, {x + 1, -2}, {x + 2, -2}, {x + 1, -1}}
-		case .J:
-			x := f32(rand.int_range(0, int(game.cells.x - 2)))
-			game.tetromino_cells = [4]Vec2{{x + 1, -3}, {x + 1, -2}, {x + 1, -1}, {x, -1}}
-		case .L:
-			x := f32(rand.int_range(0, int(game.cells.x - 2)))
-			game.tetromino_cells = [4]Vec2{{x, -3}, {x, -2}, {x, -1}, {x + 1, -1}}
-		case .S:
-			x := f32(rand.int_range(0, int(game.cells.x - 3)))
-			game.tetromino_cells = [4]Vec2{{x, -1}, {x + 1, -1}, {x + 1, -2}, {x + 2, -2}}
-		case .Z:
-			x := f32(rand.int_range(0, int(game.cells.x - 3)))
-			game.tetromino_cells = [4]Vec2{{x, -2}, {x + 1, -2}, {x + 1, -1}, {x + 2, -1}}
-		case .None:
-			assert(false)
-		}
-
-		game_projection(game)
 		game.last_update_at = ctx.clock.sim_time
 	} else {
-		fill := proc(game: ^Game, i: int) {
-			r := game.tetromino_cells[i].y
-			c := game.tetromino_cells[i].x
-			game.filled_cells[int(r)][int(c)] = true
-		}
+		if game_check_collision(game, game.tetromino.cells) {
+			for filled, i in game.tetromino.cells do if filled == 1 {
+				cell := tetromino_game_cell(&game.tetromino, i)
+				game_cell_idx := cell_to_game_cell_idx(game, cell)
+				game.cells[game_cell_idx] = GameCell {
+					filled = true,
+					color  = game.tetromino.color,
+				}
+			}
 
-		if game_check_collision(game, game.tetromino_cells[:]) {
-			fill(game, 0)
-			fill(game, 1)
-			fill(game, 2)
-			fill(game, 3)
-			game.tetromino = .None
+			game.tetromino.type = .None
 		} else {
-			game_move_down(game.tetromino_cells[:])
+			game.tetromino.row += 1
 		}
 
 		game.last_update_at = ctx.clock.sim_time
 	}
 }
 
+
 render :: proc(ctx: ^Context, game: ^Game) -> (err: Error) {
 	set_color(ctx.renderer, SDL.Color{0, 0, 0, 255}) or_return
 	sdl_proc(SDL.RenderClear(ctx.renderer)) or_return
-
-	game_cell_to_pixel_pos :: proc(game: ^Game, cell: Vec2) -> Vec2 {
-		return game.pos + cell * game.cell_size
-	}
 
 	switch ctx.mode {
 	case .Menu:
@@ -369,8 +519,8 @@ render :: proc(ctx: ^Context, game: ^Game) -> (err: Error) {
 		set_color(ctx.renderer, SDL.Color{50, 50, 50, 255}) or_return
 
 		// vertical lines
-		for col in 1 ..< game.cells.x {
-			pos := game.pos + Vec2{col, 0} * game.cell_size
+		for col in 1 ..< game.cols {
+			pos := game_cell_to_world_pos(game, Cell{i32(col), 0})
 			pos.y += 1
 			sdl_proc(
 				SDL.RenderDrawLineF(
@@ -383,8 +533,8 @@ render :: proc(ctx: ^Context, game: ^Game) -> (err: Error) {
 		}
 
 		// horizontal
-		for row in 1 ..< game.cells.y {
-			pos := game.pos + Vec2{0, row} * game.cell_size
+		for row in 1 ..< game.rows {
+			pos := game_cell_to_world_pos(game, Cell{0, i32(row)})
 			pos.x += 1
 			sdl_proc(
 				SDL.RenderDrawLineF(
@@ -398,47 +548,38 @@ render :: proc(ctx: ^Context, game: ^Game) -> (err: Error) {
 
 		// tetromino
 
-		render_tetromino_cell :: proc(
+		render_cube :: proc(
 			ctx: ^Context,
 			game: ^Game,
-			cell: Vec2,
-			fill := true,
+			cell: Cell,
+			color: SDL.Color,
 		) -> (
 			err: Error,
 		) {
-			// if cell.y < 0 {
-			// 	return
-			// }
+			set_color(ctx.renderer, color) or_return
 
-			pos := game_cell_to_pixel_pos(game, cell)
-			pos += Vec2{1, 1}
-			size := game.cell_size - Vec2{2, 2}
-			if fill {
-				fill_rect(ctx.renderer, size, pos, &SDL.Color{100, 100, 255, 255}) or_return
-			} else {
-				draw_rect(ctx.renderer, size, pos, &SDL.Color{100, 100, 255, 255}) or_return
+			pos := game_cell_to_world_pos(game, cell)
+			pos += 1
+			r := SDL.FRect {
+				x = pos.x,
+				y = pos.y,
+				w = f32(game.cell_size) - 2,
+				h = f32(game.cell_size) - 2,
 			}
-			return
+			return sdl_proc(SDL.RenderFillRectF(ctx.renderer, &r))
 		}
 
-		if game.tetromino != .None {
-			render_tetromino_cell(ctx, game, game.projection[0], false) or_return
-			render_tetromino_cell(ctx, game, game.projection[1], false) or_return
-			render_tetromino_cell(ctx, game, game.projection[2], false) or_return
-			render_tetromino_cell(ctx, game, game.projection[3], false) or_return
-
-			render_tetromino_cell(ctx, game, game.tetromino_cells[0]) or_return
-			render_tetromino_cell(ctx, game, game.tetromino_cells[1]) or_return
-			render_tetromino_cell(ctx, game, game.tetromino_cells[2]) or_return
-			render_tetromino_cell(ctx, game, game.tetromino_cells[3]) or_return
+		if game.tetromino.type != .None {
+			for cell, i in game.tetromino.cells do if cell == 1 {
+				game_cell := tetromino_game_cell(&game.tetromino, i)
+				render_cube(ctx, game, game_cell, game.tetromino.color) or_return
+			}
 		}
 
-		for columns, row in game.filled_cells {
-			for valid, col in columns {
-				if valid {
-					render_tetromino_cell(ctx, game, Vec2{f32(col), f32(row)})
-				}
-			}
+		for cell, i in game.cells do if cell.filled {
+			row := i / game.cols
+			col := i % game.cols
+			render_cube(ctx, game, Cell{i32(col), i32(row)}, cell.color) or_return
 		}
 	}
 
@@ -509,43 +650,44 @@ main :: proc() {
 			case .KEYDOWN:
 				#partial switch event.key.keysym.sym {
 				case .LEFT:
-					if game.tetromino != .None {
-						most_left := min(
-							game.tetromino_cells[0].x,
-							game.tetromino_cells[1].x,
-							game.tetromino_cells[2].x,
-							game.tetromino_cells[3].x,
-						)
-						if most_left > 0 {
-							game.tetromino_cells[0].x -= 1
-							game.tetromino_cells[1].x -= 1
-							game.tetromino_cells[2].x -= 1
-							game.tetromino_cells[3].x -= 1
-
-							game_projection(&game)
+					if game.tetromino.type != .None {
+						can_shift := true
+						for filled, i in game.tetromino.cells do if filled == 1 {
+							cell := tetromino_game_cell(&game.tetromino, i)
+							can_shift = can_shift && cell.col > 0
+							if !can_shift {
+								break
+							}
+						}
+						if can_shift {
+							game.tetromino.col -= 1
+							game.last_update_at = ctx.clock.sim_time
 						}
 					}
 				case .RIGHT:
-					if game.tetromino != .None {
-						most_right := max(
-							game.tetromino_cells[0].x,
-							game.tetromino_cells[1].x,
-							game.tetromino_cells[2].x,
-							game.tetromino_cells[3].x,
-						)
-						if most_right < game.cells.x - 1 {
-							game.tetromino_cells[0].x += 1
-							game.tetromino_cells[1].x += 1
-							game.tetromino_cells[2].x += 1
-							game.tetromino_cells[3].x += 1
-
-							game_projection(&game)
+					if game.tetromino.type != .None {
+						can_shift := true
+						for filled, i in game.tetromino.cells do if filled == 1 {
+							cell := tetromino_game_cell(&game.tetromino, i)
+							can_shift = can_shift && cell.col < i32(game.cols) - 1
+							if !can_shift {
+								break
+							}
+						}
+						if can_shift {
+							game.tetromino.col += 1
+							game.last_update_at = ctx.clock.sim_time
 						}
 					}
+				case .UP:
+					if game.tetromino.type != .None {
+						tetromino_switch_state(&game.tetromino)
+					}
 				case .DOWN:
-					if game.tetromino != .None &&
-					   !game_check_collision(&game, game.tetromino_cells[:]) {
-						game_move_down(game.tetromino_cells[:])
+					if game.tetromino.type != .None &&
+					   !game_check_collision(&game, game.tetromino.cells) {
+						game.tetromino.row += 1
+						game.last_update_at = ctx.clock.sim_time
 					}
 				}
 			case .QUIT:
