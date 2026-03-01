@@ -440,6 +440,7 @@ Game :: struct {
 
 	//
 	last_update_at: f64,
+	queue:          [3]Tetromino,
 	tetromino:      Tetromino,
 	cells:          []GameCell,
 }
@@ -454,6 +455,10 @@ game_init :: proc(ctx: ^Context, game: ^Game, allocator := context.allocator) {
 	game.size = Vec2{cols, rows} * Vec2{cell_size, cell_size}
 
 	game.cells = make([]GameCell, cols * rows, allocator = allocator)
+
+	for _, i in game.queue {
+		tetromino_init(&game.queue[i])
+	}
 }
 
 game_layout :: proc(ctx: ^Context, game: ^Game) {
@@ -509,8 +514,12 @@ update :: proc(ctx: ^Context, game: ^Game) {
 	}
 
 	if game.tetromino.type == .None {
-		tetromino_init(&game.tetromino)
+		game.tetromino = game.queue[0]
 		tetromino_projection(game, &game.tetromino)
+
+		game.queue[0] = game.queue[1]
+		game.queue[1] = game.queue[2]
+		tetromino_init(&game.queue[2])
 
 		game.last_update_at = ctx.clock.sim_time
 	} else {
@@ -614,10 +623,65 @@ render :: proc(ctx: ^Context, game: ^Game) -> (err: Error) {
 			}
 		}
 
+
+		// filled cells
+
 		for cell, i in game.cells do if cell.filled {
 			row := i / game.cols
 			col := i % game.cols
 			render_cube(ctx, game, Cell{i32(col), i32(row)}, cell.color) or_return
+		}
+
+		{ 	// next tetrominos
+			pos := game.pos
+			pos.x += game.size.x + 40
+			draw_rect(ctx.renderer, game.size, pos, &SDL.Color{100, 100, 100, 255}) or_return
+
+
+			size := Vec2{f32(game.cell_size) * 4, f32(game.cell_size) * 4}
+			start := pos + game.size / 2
+			start -= size / 2
+			start.y -= size.y
+
+			// tetromino
+
+			for t in game.queue {
+				cube_size :: 20
+
+				{ 	// grid
+					draw_rect(ctx.renderer, size, start, &SDL.Color{100, 100, 100, 255}) or_return
+
+					// lines
+					for i in 0 ..< 4 {
+						p := start + f32(i) * cube_size
+						sdl_proc(
+							SDL.RenderDrawLineF(ctx.renderer, p.x, start.y, p.x, start.y + size.y),
+						) or_return
+						sdl_proc(
+							SDL.RenderDrawLineF(ctx.renderer, start.x, p.y, start.x + size.x, p.y),
+						) or_return
+					}
+				}
+
+				set_color(ctx.renderer, t.color)
+
+				for filled, i in t.cells do if filled == 1 {
+					col, row := i32(i) % 4, i32(i) / 4
+
+					pos := start + Vec2{f32(col), f32(row)} * cube_size
+					pos += 1
+
+					r := SDL.FRect {
+						x = pos.x,
+						y = pos.y,
+						w = cube_size - 3,
+						h = cube_size - 3,
+					}
+					sdl_proc(SDL.RenderFillRectF(ctx.renderer, &r)) or_return
+				}
+
+				start.y += size.y
+			}
 		}
 	}
 
