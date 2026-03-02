@@ -62,6 +62,12 @@ Rect :: struct {
 	pos:  Vec2,
 }
 
+rect_interferes :: proc(r: Rect, pos: Vec2) -> bool {
+	inside_x := r.pos.x <= pos.x && r.pos.x + r.size.x >= pos.x
+	inside_y := r.pos.y <= pos.y && r.pos.y + r.size.y >= pos.y
+	return inside_x && inside_y
+}
+
 set_color :: proc(renderer: ^SDL.Renderer, color: SDL.Color) -> Error {
 	return sdl_proc(SDL.SetRenderDrawColor(renderer, expand_values(color)))
 }
@@ -128,7 +134,7 @@ load_font :: proc(renderer: ^SDL.Renderer, font: ^Font, size: i32) -> (err: Erro
 	w, h: i32
 
 	for ch in GLYPH_START ..< GLYPH_END {
-		i := ch - 32
+		i := ch - GLYPH_START
 		surface := TTF.RenderGlyph_Blended(font.font, u16(ch), SDL.Color{255, 255, 255, 255})
 		if surface == nil {
 			err = create_error_sdl()
@@ -146,6 +152,8 @@ load_font :: proc(renderer: ^SDL.Renderer, font: ^Font, size: i32) -> (err: Erro
 		err = create_error_sdl()
 		return
 	}
+
+	sdl_proc(SDL.SetTextureBlendMode(font.atlas, .BLEND)) or_return
 
 	x: f32
 
@@ -165,6 +173,48 @@ load_font :: proc(renderer: ^SDL.Renderer, font: ^Font, size: i32) -> (err: Erro
 		sdl_proc(SDL.UpdateTexture(font.atlas, &sr, surface.pixels, surface.pitch)) or_return
 
 		x += f32(surface.w)
+	}
+
+	return
+}
+
+text_size :: proc(font: ^Font, text: string) -> (s: Vec2) {
+	for ch in text {
+		g := font.glyphs[ch - GLYPH_START]
+		s.x += g.size.x
+		s.y = max(s.y, g.size.y)
+	}
+	return
+}
+
+render_text :: proc(
+	renderer: ^SDL.Renderer,
+	font: ^Font,
+	pos: Vec2,
+	text: string,
+) -> (
+	err: Error,
+) {
+	x := pos.x
+
+	for c in text {
+		glyph := font.glyphs[c - GLYPH_START]
+
+		s := SDL.Rect {
+			x = i32(glyph.pos.x),
+			y = i32(glyph.pos.y),
+			w = i32(glyph.size.x),
+			h = i32(glyph.size.y),
+		}
+		d := SDL.FRect {
+			x = x,
+			y = pos.y,
+			w = glyph.size.x,
+			h = glyph.size.y,
+		}
+		sdl_proc(SDL.RenderCopyF(renderer, font.atlas, &s, &d)) or_return
+
+		x += glyph.size.x
 	}
 
 	return
@@ -195,27 +245,54 @@ clock_frame_start :: proc(clock: ^Clock) {
 	clock.frame_start = n
 }
 
+Mouse :: struct {
+	using pos: Vec2,
+	btn:       u32,
+}
+
 Context :: struct {
 	window:      ^SDL.Window,
 	renderer:    ^SDL.Renderer,
 	window_size: Vec2,
-	mode:        Mode,
+	screen:      Screen,
 	font:        ^Font,
 	clock:       Clock,
+	mouse:       Mouse,
 }
 
-Mode :: enum {
-	Menu,
+Screen :: enum {
+	Begin,
 	Game,
 }
 
-Menu :: struct {
-	button: Rect,
+Ui :: struct {
+	// begin
+	play_button_rect:        Rect,
+	play_button_text:        string,
+	play_button_text_rect:   Rect,
+
+	// pause
+	resume_button_rect:      Rect,
+	resume_button_text:      string,
+	resume_button_text_rect: Rect,
 }
 
-menu_layout :: proc(ctx: ^Context, menu: ^Menu) {
-	menu.button.size = Vec2{200, 40}
-	menu.button.pos = Vec2{200, 40}
+ui_init :: proc(ctx: ^Context, ui: ^Ui) {
+	ui.play_button_rect.size = Vec2{180, 40}
+	ui.play_button_text = "Play game"
+	ui.play_button_text_rect.size = text_size(ctx.font, ui.play_button_text)
+
+	ui.resume_button_rect.size = Vec2{180, 40}
+	ui.resume_button_text = "Resume"
+	ui.resume_button_text_rect.size = text_size(ctx.font, ui.resume_button_text)
+}
+
+ui_layout :: proc(ctx: ^Context, ui: ^Ui) {
+	ui.play_button_rect.pos = ctx.window_size / 2 - ui.play_button_rect.size / 2
+	ui.play_button_text_rect.pos = ctx.window_size / 2 - ui.play_button_text_rect.size / 2
+
+	ui.resume_button_rect.pos = ctx.window_size / 2 - ui.resume_button_rect.size / 2
+	ui.resume_button_text_rect.pos = ctx.window_size / 2 - ui.resume_button_text_rect.size / 2
 }
 
 Cell :: struct {
@@ -433,10 +510,17 @@ GameCell :: struct {
 	filled: bool,
 }
 
+GameState :: enum {
+	Running,
+	Pause,
+	Over,
+}
+
 Game :: struct {
 	using _:        Rect,
 	cols, rows:     int,
 	cell_size:      i32,
+	state:          GameState,
 
 	//
 	last_update_at: f64,
@@ -509,48 +593,52 @@ game_remove_filled_rows :: proc(game: ^Game) {
 update :: proc(ctx: ^Context, game: ^Game) {
 	update_timeout :: 0.5
 
-	if game.last_update_at + update_timeout >= ctx.clock.sim_time {
-		return
-	}
-
-	if game.tetromino.type == .None {
-		game.tetromino = game.queue[0]
-		tetromino_projection(game, &game.tetromino)
-
-		game.queue[0] = game.queue[1]
-		game.queue[1] = game.queue[2]
-		tetromino_init(&game.queue[2])
-
-		game.last_update_at = ctx.clock.sim_time
-	} else {
-		if game_check_collision(game, game.tetromino, game.tetromino.cells) {
-			for filled, i in game.tetromino.cells do if filled == 1 {
-				cell := tetromino_game_cell(&game.tetromino, i)
-				game_cell_idx := cell_to_game_cell_idx(game, cell)
-				game.cells[game_cell_idx] = GameCell {
-					filled = true,
-					color  = game.tetromino.color,
-				}
-			}
-
-			game_remove_filled_rows(game)
-			game.tetromino.type = .None
-		} else {
-			game.tetromino.row += 1
+	if ctx.screen == .Game && game.state == .Running {
+		if game.last_update_at + update_timeout >= ctx.clock.sim_time {
+			return
 		}
 
-		game.last_update_at = ctx.clock.sim_time
+		if game.tetromino.type == .None {
+			game.tetromino = game.queue[0]
+			tetromino_projection(game, &game.tetromino)
+
+			game.queue[0] = game.queue[1]
+			game.queue[1] = game.queue[2]
+			tetromino_init(&game.queue[2])
+
+			if game_check_collision(game, game.tetromino, game.tetromino.cells) {
+				game.state = .Over
+			}
+
+			game.last_update_at = ctx.clock.sim_time
+		} else {
+			if game_check_collision(game, game.tetromino, game.tetromino.cells) {
+				for filled, i in game.tetromino.cells do if filled == 1 {
+					cell := tetromino_game_cell(&game.tetromino, i)
+					game_cell_idx := cell_to_game_cell_idx(game, cell)
+					game.cells[game_cell_idx] = GameCell {
+						filled = true,
+						color  = game.tetromino.color,
+					}
+				}
+
+				game_remove_filled_rows(game)
+				game.tetromino.type = .None
+			} else {
+				game.tetromino.row += 1
+			}
+
+			game.last_update_at = ctx.clock.sim_time
+		}
 	}
 }
 
 
-render :: proc(ctx: ^Context, game: ^Game) -> (err: Error) {
+render :: proc(ctx: ^Context, game: ^Game, ui: ^Ui) -> (err: Error) {
 	set_color(ctx.renderer, SDL.Color{0, 0, 0, 255}) or_return
 	sdl_proc(SDL.RenderClear(ctx.renderer)) or_return
 
-	switch ctx.mode {
-	case .Menu:
-	case .Game:
+	render_grid :: proc(ctx: ^Context, game: ^Game) -> (err: Error) {
 		set_color(ctx.renderer, SDL.Color{150, 150, 150, 255}) or_return
 		draw_rect(ctx.renderer, game.size, game.pos) or_return
 
@@ -583,6 +671,92 @@ render :: proc(ctx: ^Context, game: ^Game) -> (err: Error) {
 				),
 			) or_return
 		}
+
+		return
+	}
+
+	render_queue :: proc(ctx: ^Context, game: ^Game) -> (err: Error) {
+		pos := game.pos
+		pos.x += game.size.x + 40
+		draw_rect(ctx.renderer, game.size, pos, &SDL.Color{100, 100, 100, 255}) or_return
+
+		size := Vec2{f32(game.cell_size) * 4, f32(game.cell_size) * 4}
+		start := pos + game.size / 2
+		start -= size / 2
+		start.y -= size.y
+
+		render_text(ctx.renderer, ctx.font, Vec2{start.x, pos.y + 20}, "Next") or_return
+
+		// tetromino
+
+		for t in game.queue {
+			cube_size :: 20
+
+			{ 	// grid
+				draw_rect(ctx.renderer, size, start, &SDL.Color{100, 100, 100, 255}) or_return
+
+				// lines
+				for i in 0 ..< 4 {
+					p := start + f32(i) * cube_size
+					sdl_proc(
+						SDL.RenderDrawLineF(ctx.renderer, p.x, start.y, p.x, start.y + size.y),
+					) or_return
+					sdl_proc(
+						SDL.RenderDrawLineF(ctx.renderer, start.x, p.y, start.x + size.x, p.y),
+					) or_return
+				}
+			}
+
+			if ctx.screen == .Game {
+				set_color(ctx.renderer, t.color) or_return
+
+				for filled, i in t.cells do if filled == 1 {
+					col, row := i32(i) % 4, i32(i) / 4
+
+					pos := start + Vec2{f32(col), f32(row)} * cube_size
+					pos += 1
+
+					r := SDL.FRect {
+						x = pos.x,
+						y = pos.y,
+						w = cube_size - 3,
+						h = cube_size - 3,
+					}
+					sdl_proc(SDL.RenderFillRectF(ctx.renderer, &r)) or_return
+				}
+			}
+
+			start.y += size.y
+		}
+
+		return
+	}
+
+	render_overlay :: proc(ctx: ^Context) -> Error {
+		return fill_rect(ctx.renderer, ctx.window_size, Vec2{}, &SDL.Color{150, 150, 150, 50})
+	}
+
+	switch ctx.screen {
+	case .Begin:
+		render_overlay(ctx) or_return
+		render_grid(ctx, game) or_return
+		render_queue(ctx, game) or_return
+
+		// play button
+		fill_rect(
+			ctx.renderer,
+			expand_values(ui.play_button_rect),
+			&SDL.Color{150, 150, 150, 255},
+		) or_return
+
+		render_text(
+			ctx.renderer,
+			ctx.font,
+			ui.play_button_text_rect.pos,
+			ui.play_button_text,
+		) or_return
+	case .Game:
+		render_grid(ctx, game) or_return
 
 		// tetromino
 
@@ -623,7 +797,6 @@ render :: proc(ctx: ^Context, game: ^Game) -> (err: Error) {
 			}
 		}
 
-
 		// filled cells
 
 		for cell, i in game.cells do if cell.filled {
@@ -632,56 +805,23 @@ render :: proc(ctx: ^Context, game: ^Game) -> (err: Error) {
 			render_cube(ctx, game, Cell{i32(col), i32(row)}, cell.color) or_return
 		}
 
-		{ 	// next tetrominos
-			pos := game.pos
-			pos.x += game.size.x + 40
-			draw_rect(ctx.renderer, game.size, pos, &SDL.Color{100, 100, 100, 255}) or_return
+		render_queue(ctx, game) or_return
 
+		if game.state == .Pause {
+			render_overlay(ctx) or_return
 
-			size := Vec2{f32(game.cell_size) * 4, f32(game.cell_size) * 4}
-			start := pos + game.size / 2
-			start -= size / 2
-			start.y -= size.y
+			fill_rect(
+				ctx.renderer,
+				expand_values(ui.resume_button_rect),
+				&SDL.Color{150, 150, 150, 255},
+			) or_return
 
-			// tetromino
-
-			for t in game.queue {
-				cube_size :: 20
-
-				{ 	// grid
-					draw_rect(ctx.renderer, size, start, &SDL.Color{100, 100, 100, 255}) or_return
-
-					// lines
-					for i in 0 ..< 4 {
-						p := start + f32(i) * cube_size
-						sdl_proc(
-							SDL.RenderDrawLineF(ctx.renderer, p.x, start.y, p.x, start.y + size.y),
-						) or_return
-						sdl_proc(
-							SDL.RenderDrawLineF(ctx.renderer, start.x, p.y, start.x + size.x, p.y),
-						) or_return
-					}
-				}
-
-				set_color(ctx.renderer, t.color)
-
-				for filled, i in t.cells do if filled == 1 {
-					col, row := i32(i) % 4, i32(i) / 4
-
-					pos := start + Vec2{f32(col), f32(row)} * cube_size
-					pos += 1
-
-					r := SDL.FRect {
-						x = pos.x,
-						y = pos.y,
-						w = cube_size - 3,
-						h = cube_size - 3,
-					}
-					sdl_proc(SDL.RenderFillRectF(ctx.renderer, &r)) or_return
-				}
-
-				start.y += size.y
-			}
+			render_text(
+				ctx.renderer,
+				ctx.font,
+				ui.resume_button_text_rect.pos,
+				ui.resume_button_text,
+			) or_return
 		}
 	}
 
@@ -716,10 +856,15 @@ main :: proc() {
 		return
 	}
 
+	if err := sdl_proc(SDL.SetRenderDrawBlendMode(renderer, .BLEND)); err != nil {
+		fmt.eprintln(error_string(err))
+		return
+	}
+
 	SDL.SetWindowTitle(window, "Tetris")
 
 	font: Font
-	if err := load_font(renderer, &font, 16); err != nil {
+	if err := load_font(renderer, &font, 32); err != nil {
 		fmt.eprintln(error_string(err))
 		return
 	}
@@ -728,7 +873,7 @@ main :: proc() {
 		window      = window,
 		renderer    = renderer,
 		window_size = Vec2{f32(window_width), f32(window_height)},
-		mode        = .Game,
+		screen      = .Begin,
 		font        = &font,
 	}
 	clock_init(&ctx.clock)
@@ -736,6 +881,10 @@ main :: proc() {
 	game: Game
 	game_init(&ctx, &game)
 	game_layout(&ctx, &game)
+
+	ui: Ui
+	ui_init(&ctx, &ui)
+	ui_layout(&ctx, &ui)
 
 	err: Error
 
@@ -825,9 +974,43 @@ main :: proc() {
 						game.tetromino.row += 1
 						game.last_update_at = ctx.clock.sim_time
 					}
+				case .ESCAPE:
+					if ctx.screen == .Game {
+						#partial switch game.state {
+						case .Running:
+							game.state = .Pause
+						case .Pause:
+							game.state = .Running
+						}
+					}
 				}
 			case .QUIT:
 				return
+			}
+		}
+
+		{ 	// mouse
+			mx, my: c.int
+			m_button := SDL.GetMouseState(&mx, &my)
+			mouse_pos := Vec2{f32(mx), f32(my)}
+
+			defer {
+				ctx.mouse.pos = mouse_pos
+				ctx.mouse.btn = m_button
+			}
+
+			if m_button & SDL.BUTTON_LMASK != 0 && ctx.mouse.btn & SDL.BUTTON_LMASK == 0 {
+				// click
+				switch ctx.screen {
+				case .Begin:
+					if rect_interferes(ui.play_button_rect, mouse_pos) {
+						ctx.screen = .Game
+					}
+				case .Game:
+					if game.state == .Pause && rect_interferes(ui.resume_button_rect, mouse_pos) {
+						game.state = .Running
+					}
+				}
 			}
 		}
 
@@ -837,7 +1020,7 @@ main :: proc() {
 
 		// render
 
-		if err = render(&ctx, &game); err != nil {
+		if err = render(&ctx, &game, &ui); err != nil {
 			break loop
 		}
 
