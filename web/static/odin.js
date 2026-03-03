@@ -99,6 +99,7 @@ async function main() {
     const wasmBytes = await wasmRes.arrayBuffer()
 
     let targetFrameTime = 1 / 144
+    let actualFrameTime = 0
 
     /** @type {ArrayBuffer} */
     let memory
@@ -133,6 +134,9 @@ async function main() {
         env: {
             set_target_fps(fps) {
                 targetFrameTime = 1 / fps
+            },
+            get_actual_fps(fps_ptr) {
+                memView.setFloat32(fps_ptr, 1 / actualFrameTime, true)
             },
             window_size(ptr) {
                 const vec2 = new Float32Array(memory, ptr, 2)
@@ -249,6 +253,8 @@ async function main() {
                 }, remaining * 1000)
             })
         }
+
+        actualFrameTime = (frameDuration + remaining)
 
         requestAnimationFrame(step)
     }

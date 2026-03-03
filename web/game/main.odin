@@ -1,6 +1,7 @@
 package main
 
-// import "core:fmt"
+import "core:fmt"
+import "core:mem"
 
 Vec2 :: [2]f32
 Vec4 :: [4]f32
@@ -17,6 +18,8 @@ foreign import "env"
 @(default_calling_convention = "contextless")
 foreign env {
 	set_target_fps :: proc(fps: f32) ---
+	get_actual_fps :: proc(fps: ^f32) ---
+
 	window_size :: proc(_: ^Vec2) ---
 	draw_image :: proc(src_rect: ^Rect, dst_rect: ^Rect) ---
 	draw_rect :: proc(rect: ^Rect, color: ^Color) ---
@@ -104,7 +107,13 @@ button_render :: proc(button: ^Button) {
 	fill_text(&text_pos, &button.text_color, button.text)
 }
 
+Fps :: struct {
+	using rect: Rect,
+	text:       string,
+}
+
 UI :: struct {
+	fps:         Fps,
 	play_button: Button,
 }
 
@@ -129,8 +138,14 @@ Context :: struct {
 
 ctx: Context
 
+temp_allocator_data: [mem.Kilobyte * 4]byte
+temp_allocator_arena: mem.Arena
+
 @(export)
 init :: proc() {
+	mem.arena_init(&temp_allocator_arena, temp_allocator_data[:])
+	context.temp_allocator = mem.arena_allocator(&temp_allocator_arena)
+
 	set_target_fps(144)
 	window_size(&ctx.window_size)
 
@@ -144,11 +159,23 @@ layout :: proc(ctx: ^Context) {
 
 	switch ctx.screen {
 	case .Begin:
-		{ 	// play button
-			ui.play_button.rect.xy = ctx.window_size / 2 - ui.play_button.rect.zw / 2
-		}
+		// play button
+		ui.play_button.rect.xy = ctx.window_size / 2 - ui.play_button.rect.zw / 2
+
+
 	case .Game:
 
+	}
+
+	{// fps
+		fps := &ui.fps
+
+		text_size: Vec2
+		measure_text(&text_size, fps.text)
+
+		fps.rect.zw = text_size
+		fps.rect.x = ctx.window_size.x - text_size.x - 20
+		fps.rect.y = 20
 	}
 }
 
@@ -163,13 +190,27 @@ draw :: proc(ctx: ^Context) {
 	case .Game:
 
 	}
+
+	{ 	// fps
+		pos := ui.fps.rect.xy
+		fill_text(&pos, &Color{1, 0.9, 0.2, 1}, ui.fps.text)
+	}
 }
 
 @(export)
 step :: proc(delta_time: f64) {
-	layout(&ctx)
+	context.temp_allocator = mem.arena_allocator(&temp_allocator_arena)
+	free_all(context.temp_allocator)
 
 	ui := &ctx.ui
+
+	{
+		fps: f32
+		get_actual_fps(&fps)
+		ui.fps.text = fmt.tprintf("%.0f", fps)
+	}
+
+	layout(&ctx)
 
 	{ 	// mouse
 		mouse: Mouse
@@ -190,7 +231,6 @@ step :: proc(delta_time: f64) {
 			case .Game:
 			}
 		}
-
 	}
 
 	draw(&ctx)
