@@ -38,12 +38,6 @@ coords_vec :: proc(coords: Coords) -> (v: Vec2) {
 	return
 }
 
-Tetromino :: struct {
-	kind:   TetrominoKind,
-	pos:    Coords,
-	coords: [4]Coords,
-}
-
 tetromino_coords := [TetrominoKind][4]Coords {
 	.None = {},
 	.I    = {{0, 1}, {1, 1}, {2, 1}, {3, 1}},
@@ -53,6 +47,23 @@ tetromino_coords := [TetrominoKind][4]Coords {
 	.S    = {{0, 1}, {1, 1}, {1, 0}, {2, 0}},
 	.Z    = {{0, 0}, {1, 0}, {1, 1}, {2, 1}},
 	.T    = {{0, 0}, {1, 0}, {2, 0}, {1, 1}},
+}
+
+tetromino_cubes := [TetrominoKind]Cube {
+	.None = {},
+	.I    = .Cyan,
+	.O    = .Yellow,
+	.L    = .Blue,
+	.J    = .Orange,
+	.S    = .Pink,
+	.Z    = .Sand,
+	.T    = .Purple,
+}
+
+Tetromino :: struct {
+	kind:   TetrominoKind,
+	pos:    Coords,
+	coords: [4]Coords,
 }
 
 tetromino_init :: proc(tetromino: ^Tetromino, kind: TetrominoKind, game_cols: int) {
@@ -195,7 +206,6 @@ is_cell_filled :: proc(coords: Coords, sp: ^Singleplayer) -> (collided: bool) {
 	return
 }
 
-
 singleplayer_update :: proc(ctx: ^Context) {
 	sp := &ctx.singleplayer
 	updated := false
@@ -284,7 +294,6 @@ singleplayer_draw :: proc(ctx: ^Context) {
 		fill_text(&pos, &Color{1, 1, 1, 1}, countdown_text)
 	case .Game:
 		{ 	// padding horizontal
-			// game_pos := sp.game_rect.xy
 			for i in 0 ..< 2 + sp.cols {
 				x := sp.game_rect.x + f32(i * CUBE_SIZE)
 
@@ -312,12 +321,15 @@ singleplayer_draw :: proc(ctx: ^Context) {
 
 		{ 	// tetromino
 			tetromino := sp.tetromino
-			start := sp.game_rect.xy + CUBE_SIZE + coords_vec(tetromino.pos) * CUBE_SIZE
 
-			for c in sp.tetromino.coords {
-				cv := coords_vec(c)
-				pos := start + cv * CUBE_SIZE
-				draw_cube(.Lime, pos)
+			if tetromino.kind != .None {
+				start := sp.game_rect.xy + CUBE_SIZE + coords_vec(tetromino.pos) * CUBE_SIZE
+
+				for c in sp.tetromino.coords {
+					cv := coords_vec(c)
+					pos := start + cv * CUBE_SIZE
+					draw_cube(tetromino_cubes[tetromino.kind], pos)
+				}
 			}
 		}
 
@@ -358,7 +370,7 @@ singleplayer_draw :: proc(ctx: ^Context) {
 
 			for c in coords {
 				dst := coords_vec(c) * CUBE_SIZE + sp.queue_rect.xy
-				draw_cube(.Lime, dst)
+				draw_cube(tetromino_cubes[next], dst)
 			}
 		}
 	}
