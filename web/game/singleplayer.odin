@@ -61,12 +61,13 @@ tetromino_cubes := [TetrominoKind]Cube {
 }
 
 Tetromino :: struct {
-	kind:   TetrominoKind,
-	pos:    Coords,
-	coords: [4]Coords,
+	kind:           TetrominoKind,
+	pos:            Coords,
+	projection_pos: Coords,
+	coords:         [4]Coords,
 }
 
-tetromino_init :: proc(tetromino: ^Tetromino, kind: TetrominoKind, game_cols: int) {
+tetromino_init :: proc(tetromino: ^Tetromino, kind: TetrominoKind, sp: ^Singleplayer) {
 	tetromino.kind = kind
 	tetromino.coords = tetromino_coords[kind]
 	tetromino.pos = Coords{3, 0}
@@ -74,6 +75,35 @@ tetromino_init :: proc(tetromino: ^Tetromino, kind: TetrominoKind, game_cols: in
 	case .O:
 		tetromino.pos = Coords{4, 0}
 	}
+
+	tetromino_project(tetromino, sp)
+}
+
+tetromino_project :: proc(tetromino: ^Tetromino, sp: ^Singleplayer) {
+	pos := tetromino.pos
+
+	outer: for {
+		for c in tetromino.coords {
+			abs_col, abs_row := c.col + pos.col, c.row + pos.row
+
+			if abs_row >= sp.rows {
+				pos.row -= 1
+				break outer
+			}
+
+			idx := abs_row * sp.cols + abs_col
+			cell := sp.filled_cells[idx]
+
+			if cell != .None {
+				pos.row -= 1
+				break outer
+			}
+		}
+
+		pos.row += 1
+	}
+
+	tetromino.projection_pos = pos
 }
 
 tetromino_abs_coords :: proc(tetromino: ^Tetromino) -> (coords: [4]Coords) {
@@ -174,7 +204,7 @@ singleplayer_init :: proc(ctx: ^Context, allocator := context.allocator) {
 	// tetromino and queue
 
 	sp_queue_init(&sp.queue)
-	tetromino_init(&sp.tetromino, sp_queue_next(&sp.queue), sp.cols)
+	tetromino_init(&sp.tetromino, sp_queue_next(&sp.queue), sp)
 }
 
 singleplayer_layout :: proc(ctx: ^Context) {
@@ -228,18 +258,18 @@ singleplayer_update :: proc(ctx: ^Context) {
 				return
 			}
 
+			updated = true
+
 			// spawn tetromino
 			if sp.tetromino.kind == .None {
-				updated = true
 				next_kind := sp_queue_next(&sp.queue)
-				tetromino_init(&sp.tetromino, next_kind, sp.cols)
+				tetromino_init(&sp.tetromino, next_kind, sp)
 				return
 			}
 
 			// move tetromino
 
 			sp.tetromino.pos.row += 1
-			updated = true
 
 			tetromino := &sp.tetromino
 			collided := false
@@ -254,16 +284,32 @@ singleplayer_update :: proc(ctx: ^Context) {
 				// put cells to the filled cells
 				tetromino.pos.row -= 1
 
-				for c in tetromino.coords {
-					col := tetromino.pos.col + c.col
-					row := tetromino.pos.row + c.row
-
-					idx := row * sp.cols + col
-					sp.filled_cells[idx] = .Pink
+				for c in tetromino_abs_coords(tetromino) {
+					idx := c.row * sp.cols + c.col
+					sp.filled_cells[idx] = tetromino_cubes[tetromino.kind]
 				}
 
 				// delete current tetromino
 				tetromino.kind = .None
+
+				// delete filled rows
+				for row in 0 ..< sp.rows {
+					from_idx := row * sp.cols
+					to_idx := from_idx + sp.cols
+					row_cells := sp.filled_cells[from_idx:to_idx]
+					filled := true
+
+					for rc in row_cells do if rc == .None {
+						filled = false
+						break
+					}
+
+					if filled {
+						// this row is filled, need to move all the prev elements
+						// to this row
+						copy(sp.filled_cells[sp.cols:to_idx], sp.filled_cells[:from_idx])
+					}
+				}
 			}
 
 			return
@@ -319,16 +365,25 @@ singleplayer_draw :: proc(ctx: ^Context) {
 			draw_cube(.Gray, Vec2{x, y})
 		}
 
-		{ 	// tetromino
+		{ 	// tetromino and projection
 			tetromino := sp.tetromino
 
 			if tetromino.kind != .None {
-				start := sp.game_rect.xy + CUBE_SIZE + coords_vec(tetromino.pos) * CUBE_SIZE
+				start_pos := sp.game_rect.xy + CUBE_SIZE
+				tetromino_pos := start_pos + coords_vec(tetromino.pos) * CUBE_SIZE
 
 				for c in sp.tetromino.coords {
 					cv := coords_vec(c)
-					pos := start + cv * CUBE_SIZE
+					pos := tetromino_pos + cv * CUBE_SIZE
 					draw_cube(tetromino_cubes[tetromino.kind], pos)
+				}
+
+				projection_pos := start_pos + coords_vec(tetromino.projection_pos) * CUBE_SIZE
+
+				for c in sp.tetromino.coords {
+					cv := coords_vec(c)
+					pos := projection_pos + cv * CUBE_SIZE
+					draw_rect(&Rect{pos.x, pos.y, CUBE_SIZE, CUBE_SIZE}, &Color{0.6, 0.6, 0.6, 1})
 				}
 			}
 		}
@@ -434,7 +489,10 @@ singleplayer_process_event :: proc(ctx: ^Context, event: ^Event) {
 					rotated := tetromino_rotate(&sp.tetromino)
 
 					if rotated {
-						// check collision
+						// check collision and do kicks
+
+						// project
+						tetromino_project(&sp.tetromino, sp)
 					}
 				}
 			case .LEFT:
@@ -452,6 +510,8 @@ singleplayer_process_event :: proc(ctx: ^Context, event: ^Event) {
 					// revert if collision
 					if collision {
 						t.pos.col += 1
+					} else {
+						tetromino_project(t, sp)
 					}
 				}
 			case .RIGHT:
@@ -469,6 +529,8 @@ singleplayer_process_event :: proc(ctx: ^Context, event: ^Event) {
 					// revert if collision
 					if collision {
 						t.pos.col -= 1
+					} else {
+						tetromino_project(t, sp)
 					}
 				}
 			}

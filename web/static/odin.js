@@ -267,15 +267,13 @@ async function main() {
             },
             poll_event(event_ptr) {
                 if (events.length > 0) {
-                    const event = new Uint8Array(events[events.length - 1])
+                    const event = new Uint8Array(events.shift())
 
                     let i = 0
                     for (const b of event) {
                         memView.setUint8(event_ptr + i, b)
                         i += 1
                     }
-
-                    events.pop()
                 } else {
                     memView.setUint8(event_ptr, 0)
                 }
