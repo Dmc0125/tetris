@@ -195,6 +195,10 @@ async function main() {
             tick_now() {
                 return performance.now()
             },
+            rand_bytes(ptr, len) {
+                const view = new Uint8Array(memory, ptr, len)
+                crypto.getRandomValues(view)
+            },
         },
         env: {
             set_target_fps(fps) {

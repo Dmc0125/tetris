@@ -1,5 +1,6 @@
 package main
 
+import "base:runtime"
 import "core:fmt"
 import "core:mem"
 
@@ -279,6 +280,8 @@ step :: proc(delta_time: f64) -> bool {
 	context.allocator = mem.arena_allocator(&allocator_arena)
 	context.temp_allocator = mem.arena_allocator(&temp_allocator_arena)
 	free_all(context.temp_allocator)
+
+	context.random_generator = runtime.default_random_generator()
 
 	if ctx.screen == .Singleplayer {
 		clock_frame_start(&ctx.singleplayer.clock, delta_time)

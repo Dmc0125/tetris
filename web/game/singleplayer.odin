@@ -1,6 +1,7 @@
 package main
 
 import "core:fmt"
+import "core:math/rand"
 
 Clock :: struct {
 	time:       f64,
@@ -43,57 +44,24 @@ Tetromino :: struct {
 	coords: [4]Coords,
 }
 
+tetromino_coords := [TetrominoKind][4]Coords {
+	.None = {},
+	.I    = {{0, 1}, {1, 1}, {2, 1}, {3, 1}},
+	.O    = {{0, 0}, {1, 0}, {0, 1}, {1, 1}},
+	.L    = {{1, 0}, {1, 1}, {1, 2}, {2, 2}},
+	.J    = {{1, 0}, {1, 1}, {1, 2}, {0, 2}},
+	.S    = {{0, 1}, {1, 1}, {1, 0}, {2, 0}},
+	.Z    = {{0, 0}, {1, 0}, {1, 1}, {2, 1}},
+	.T    = {{0, 0}, {1, 0}, {2, 0}, {1, 1}},
+}
+
 tetromino_init :: proc(tetromino: ^Tetromino, kind: TetrominoKind, game_cols: int) {
 	tetromino.kind = kind
+	tetromino.coords = tetromino_coords[kind]
 	tetromino.pos = Coords{3, 0}
-
-	switch kind {
-	case .None:
-	case .I:
-		// 4x4
-
-		tetromino.coords[0] = Coords{0, 1}
-		tetromino.coords[1] = Coords{1, 1}
-		tetromino.coords[2] = Coords{2, 1}
-		tetromino.coords[3] = Coords{3, 1}
+	#partial switch kind {
 	case .O:
-		// 2x2
 		tetromino.pos = Coords{4, 0}
-
-		tetromino.coords[0] = Coords{0, 0}
-		tetromino.coords[1] = Coords{1, 0}
-		tetromino.coords[2] = Coords{0, 1}
-		tetromino.coords[3] = Coords{1, 1}
-	case .L:
-		// 3x3
-		tetromino.coords[0] = Coords{1, 0}
-		tetromino.coords[1] = Coords{1, 1}
-		tetromino.coords[2] = Coords{1, 2}
-		tetromino.coords[3] = Coords{2, 2}
-	case .J:
-		// 3x3
-		tetromino.coords[0] = Coords{1, 0}
-		tetromino.coords[1] = Coords{1, 1}
-		tetromino.coords[2] = Coords{1, 2}
-		tetromino.coords[3] = Coords{0, 2}
-	case .S:
-		// 3x3
-		tetromino.coords[0] = Coords{0, 1}
-		tetromino.coords[1] = Coords{1, 1}
-		tetromino.coords[2] = Coords{1, 0}
-		tetromino.coords[3] = Coords{2, 0}
-	case .Z:
-		// 3x3
-		tetromino.coords[0] = Coords{0, 0}
-		tetromino.coords[1] = Coords{1, 0}
-		tetromino.coords[2] = Coords{1, 1}
-		tetromino.coords[3] = Coords{2, 1}
-	case .T:
-		// 3x3
-		tetromino.coords[0] = Coords{0, 0}
-		tetromino.coords[1] = Coords{1, 0}
-		tetromino.coords[2] = Coords{2, 0}
-		tetromino.coords[3] = Coords{1, 1}
 	}
 }
 
@@ -109,6 +77,29 @@ SingleplayerState :: enum {
 	None,
 	Countdown,
 	Game,
+}
+
+SP_Queue :: struct {
+	index: int,
+	bag:   [7]TetrominoKind,
+}
+
+sp_queue_init :: proc(queue: ^SP_Queue) {
+	queue.index = 0
+	queue.bag = [7]TetrominoKind{.I, .O, .L, .J, .S, .Z, .T}
+	rand.shuffle(queue.bag[:])
+}
+
+sp_queue_next :: proc(queue: ^SP_Queue) -> TetrominoKind {
+	if queue.index == 5 {
+		kind := queue.bag[6]
+		sp_queue_init(queue)
+		return kind
+	}
+
+	k := queue.index
+	queue.index += 1
+	return queue.bag[k]
 }
 
 Singleplayer :: struct {
@@ -127,7 +118,7 @@ Singleplayer :: struct {
 
 	// game
 	cols, rows:   int,
-	queue:        [3]Tetromino,
+	queue:        SP_Queue,
 	tetromino:    Tetromino,
 	filled_cells: [dynamic]Cube,
 }
@@ -163,19 +154,16 @@ singleplayer_init :: proc(ctx: ^Context, allocator := context.allocator) {
 	measure_text(&time_text_size, "999:99:99.99")
 	sp.time_rect.zw = time_text_size
 
-	{ 	// queue
-		cols, rows: f32 = 4, 4
-		size :: CUBE_SIZE * 0.75
+	// queue
 
-		sp.queue_rect.z = cols * size
-		sp.queue_rect.w = rows * size * 4 + 40 * 2
-	}
+	sp.queue_rect.zw = 4 * CUBE_SIZE
 
 	singleplayer_layout(ctx)
 
-	// tetromino
+	// tetromino and queue
 
-	tetromino_init(&sp.tetromino, .I, sp.cols)
+	sp_queue_init(&sp.queue)
+	tetromino_init(&sp.tetromino, sp_queue_next(&sp.queue), sp.cols)
 }
 
 singleplayer_layout :: proc(ctx: ^Context) {
@@ -190,8 +178,9 @@ singleplayer_layout :: proc(ctx: ^Context) {
 	sp.time_rect.x = game_end + padding
 	sp.time_rect.y = sp.game_rect.y
 
-	sp.queue_rect.x = game_end + padding
-	sp.queue_rect.y = ctx.window_size.y / 2 - sp.queue_rect.w / 2
+	// align to the end of time rect
+	sp.queue_rect.x = sp.time_rect.x + sp.time_rect.z - sp.queue_rect.z
+	sp.queue_rect.y = sp.time_rect.y + padding
 }
 
 is_cell_filled :: proc(coords: Coords, sp: ^Singleplayer) -> (collided: bool) {
@@ -232,7 +221,8 @@ singleplayer_update :: proc(ctx: ^Context) {
 			// spawn tetromino
 			if sp.tetromino.kind == .None {
 				updated = true
-				tetromino_init(&sp.tetromino, .L, sp.cols)
+				next_kind := sp_queue_next(&sp.queue)
+				tetromino_init(&sp.tetromino, next_kind, sp.cols)
 				return
 			}
 
@@ -361,12 +351,14 @@ singleplayer_draw :: proc(ctx: ^Context) {
 		}
 
 		{ 	// queue
-			r := sp.queue_rect
-			r.w = CUBE_SIZE * 0.75 * 4
-			for qt in sp.queue {
-				_ = qt
-				draw_rect(&r, &Color{0.8, 0.8, 0.8, 1})
-				r.y += 20 + r.w
+			draw_rect(&sp.queue_rect, &Color{0.8, 0.8, 0.8, 1})
+
+			next := sp.queue.bag[sp.queue.index]
+			coords := tetromino_coords[next]
+
+			for c in coords {
+				dst := coords_vec(c) * CUBE_SIZE + sp.queue_rect.xy
+				draw_cube(.Lime, dst)
 			}
 		}
 	}
@@ -461,7 +453,6 @@ singleplayer_process_event :: proc(ctx: ^Context, event: ^Event) {
 						collision = true
 						break
 					}
-
 
 					// revert if collision
 					if collision {
