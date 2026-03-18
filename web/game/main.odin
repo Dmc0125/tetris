@@ -14,6 +14,64 @@ rect_collides :: proc(r: Rect, other: Vec2) -> bool {
 	return inside_x && inside_y
 }
 
+EventKind :: enum u8 {
+	None,
+	Resize,
+	Keydown,
+	Keyup,
+}
+
+ResizeEvent :: struct {
+	kind: EventKind,
+	size: Vec2,
+}
+
+Key :: enum u16 {
+	None,
+	UP,
+	DOWN,
+	LEFT,
+	RIGHT,
+	ESCAPE,
+	// a = 65,
+	// b = 66,
+	// c = 67,
+	// d = 68,
+	// e = 69,
+	// f = 70,
+	// g = 71,
+	// h = 72,
+	// i = 73,
+	// j = 74,
+	// k = 75,
+	// l = 76,
+	// m = 77,
+	// n = 78,
+	// o = 79,
+	// p = 80,
+	// q = 81,
+	// r = 82,
+	// s = 83,
+	// t = 84,
+	// u = 85,
+	// v = 86,
+	// w = 87,
+	// x = 88,
+	// y = 89,
+	// z = 90,
+}
+
+KeyboardEvent :: struct {
+	kind: EventKind,
+	key:  Key,
+}
+
+Event :: struct #raw_union {
+	kind:     EventKind,
+	resize:   ResizeEvent,
+	keyboard: KeyboardEvent,
+}
+
 foreign import "env"
 @(default_calling_convention = "contextless")
 foreign env {
@@ -31,6 +89,7 @@ foreign env {
 
 	// events
 	get_mouse_state :: proc(mx, my: ^f32, btn: ^u8) ---
+	poll_event :: proc(event: ^Event) ---
 }
 
 Cube :: enum u8 {
@@ -49,13 +108,14 @@ Cube :: enum u8 {
 }
 
 CUBE_TEXTURE_SIZE :: 16
+CUBE_SIZE :: CUBE_TEXTURE_SIZE
 
-draw_cube :: proc(cube: Cube, dst: ^Rect) {
+draw_cube :: proc(cube: Cube, dst: Vec2, size := CUBE_SIZE) {
 	assert(cube != .None)
 
 	idx := int(cube) - 1
 	src := Rect{f32(idx * CUBE_TEXTURE_SIZE), 0, CUBE_TEXTURE_SIZE, CUBE_TEXTURE_SIZE}
-	draw_image(&src, dst)
+	draw_image(&src, &Rect{dst.x, dst.y, f32(size), f32(size)})
 }
 
 MOUSE_BTN_PRIMARY: u8 : 1 << 0
@@ -71,7 +131,7 @@ Mouse :: struct {
 
 Screen :: enum {
 	Begin,
-	Game,
+	Singleplayer,
 }
 
 Button :: struct {
@@ -114,35 +174,51 @@ Fps :: struct {
 
 UI :: struct {
 	fps:         Fps,
-	play_button: Button,
+	play_sp_btn: Button,
+	play_mp_btn: Button,
 }
 
 ui_init :: proc(ctx: ^Context) {
 	ui := &ctx.ui
 
 	button_init(
-		&ui.play_button,
+		&ui.play_sp_btn,
 		Vec2{200, 40},
-		"Play game",
+		"Play singleplayer",
+		Color{0.4, 0.4, 0.4, 1},
+		Color{1, 1, 1, 1},
+	)
+
+	button_init(
+		&ui.play_mp_btn,
+		Vec2{200, 40},
+		"Play multiplayer",
 		Color{0.4, 0.4, 0.4, 1},
 		Color{1, 1, 1, 1},
 	)
 }
 
 Context :: struct {
-	window_size: Vec2,
-	screen:      Screen,
-	mouse:       Mouse,
-	ui:          UI,
+	window_size:  Vec2,
+	screen:       Screen,
+	mouse:        Mouse,
+	ui:           UI,
+	singleplayer: Singleplayer,
 }
 
 ctx: Context
+
+allocator_data: [mem.Kilobyte * 4]byte
+allocator_arena: mem.Arena
 
 temp_allocator_data: [mem.Kilobyte * 4]byte
 temp_allocator_arena: mem.Arena
 
 @(export)
 init :: proc() {
+	mem.arena_init(&allocator_arena, allocator_data[:])
+	context.allocator = mem.arena_allocator(&allocator_arena)
+
 	mem.arena_init(&temp_allocator_arena, temp_allocator_data[:])
 	context.temp_allocator = mem.arena_allocator(&temp_allocator_arena)
 
@@ -150,24 +226,26 @@ init :: proc() {
 	window_size(&ctx.window_size)
 
 	ui_init(&ctx)
+
+	layout(&ctx)
 }
 
 layout :: proc(ctx: ^Context) {
-	window_size(&ctx.window_size)
-
 	ui := &ctx.ui
 
 	switch ctx.screen {
 	case .Begin:
 		// play button
-		ui.play_button.rect.xy = ctx.window_size / 2 - ui.play_button.rect.zw / 2
+		ui.play_sp_btn.rect.xy = ctx.window_size / 2 - ui.play_sp_btn.rect.zw / 2
+		ui.play_sp_btn.rect.y -= 30
 
-
-	case .Game:
-
+		ui.play_mp_btn.rect.xy = ctx.window_size / 2 - ui.play_sp_btn.rect.zw / 2
+		ui.play_mp_btn.rect.y += 30
+	case .Singleplayer:
+		singleplayer_layout(ctx)
 	}
 
-	{// fps
+	{ 	// fps
 		fps := &ui.fps
 
 		text_size: Vec2
@@ -180,15 +258,14 @@ layout :: proc(ctx: ^Context) {
 }
 
 draw :: proc(ctx: ^Context) {
-	window_size(&ctx.window_size)
-
 	ui := &ctx.ui
 
 	switch ctx.screen {
 	case .Begin:
-		button_render(&ui.play_button)
-	case .Game:
-
+		button_render(&ui.play_sp_btn)
+		button_render(&ui.play_mp_btn)
+	case .Singleplayer:
+		singleplayer_draw(ctx)
 	}
 
 	{ 	// fps
@@ -198,9 +275,14 @@ draw :: proc(ctx: ^Context) {
 }
 
 @(export)
-step :: proc(delta_time: f64) {
+step :: proc(delta_time: f64) -> bool {
+	context.allocator = mem.arena_allocator(&allocator_arena)
 	context.temp_allocator = mem.arena_allocator(&temp_allocator_arena)
 	free_all(context.temp_allocator)
+
+	if ctx.screen == .Singleplayer {
+		clock_frame_start(&ctx.singleplayer.clock, delta_time)
+	}
 
 	ui := &ctx.ui
 
@@ -210,7 +292,28 @@ step :: proc(delta_time: f64) {
 		ui.fps.text = fmt.tprintf("%.0f", fps)
 	}
 
-	layout(&ctx)
+	{
+		event: Event
+		for {
+			poll_event(&event)
+			if event.kind == .None {
+				break
+			}
+
+			#partial switch ctx.screen {
+			case .Singleplayer:
+				singleplayer_process_event(&ctx, &event)
+			}
+
+			// global
+
+			#partial switch event.kind {
+			case .Resize:
+				ctx.window_size = event.resize.size
+				layout(&ctx)
+			}
+		}
+	}
 
 	{ 	// mouse
 		mouse: Mouse
@@ -225,15 +328,25 @@ step :: proc(delta_time: f64) {
 
 			switch ctx.screen {
 			case .Begin:
-				if rect_collides(ui.play_button, mouse) {
-					ctx.screen = .Game
+				if rect_collides(ui.play_sp_btn, mouse) {
+					ctx.screen = .Singleplayer
+					singleplayer_init(&ctx)
 				}
-			case .Game:
+			case .Singleplayer:
 			}
 		}
 	}
 
+	{ 	// update
+		switch ctx.screen {
+		case .Begin:
+		case .Singleplayer:
+			singleplayer_update(&ctx)
+		}
+
+	}
+
 	draw(&ctx)
 
-	return
+	return true
 }

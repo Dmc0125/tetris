@@ -81,6 +81,71 @@ async function main() {
         mouseBtn = e.buttons
     })
 
+    const maxEventsCount = 512
+    /** @type {ArrayBuffer[]} */
+    const events = []
+
+    /**
+    * @param {ArrayBuffer} raw
+    */
+    function appendEvent(raw) {
+        if (events.length === maxEventsCount) {
+            events.shift()
+        }
+        events.push(raw)
+    }
+
+    /**
+    * @param {KeyboardEvent} e
+    * @param {number} t
+    */
+    function keyboardEvent(e, t) {
+        const eventRaw = new ArrayBuffer(4)
+        const view = new DataView(eventRaw)
+        view.setUint8(0, t)
+
+        switch (e.key) {
+            case "ArrowUp":
+                view.setUint16(1, 1)
+                break
+            case "ArrowDown":
+                view.setUint16(1, 2)
+                break
+            case "ArrowLeft":
+                view.setUint16(1, 3)
+                break
+            case "ArrowRight":
+                view.setUint16(1, 4)
+                break
+            case "Escape":
+                view.setUint16(1, 5)
+                break
+            default:
+                return
+        }
+
+        appendEvent(eventRaw)
+    }
+
+    window.addEventListener("keydown", function(/** @type {KeyboardEvent} */e) {
+        keyboardEvent(e, 2)
+    })
+    window.addEventListener("keyup", function(/** @type {KeyboardEvent} */e) {
+        keyboardEvent(e, 3)
+    })
+
+    window.addEventListener("resize", function() {
+        resizeCanvas(canvas, canvasCtx)
+
+        const eventRaw = new ArrayBuffer(4 + 8)
+        const view = new DataView(eventRaw)
+        view.setUint8(0, 1)
+        view.setFloat32(4, canvasWidth, true)
+        view.setFloat32(8, canvasHeight, true)
+        appendEvent(eventRaw)
+    })
+
+
     // load textures
 
     const spritesPath = "/static/sprites.png"
@@ -195,6 +260,21 @@ async function main() {
                 memView.setFloat32(x_ptr, mousex, true)
                 memView.setFloat32(y_ptr, mousey, true)
                 memView.setUint8(btn_ptr, mouseBtn)
+            },
+            poll_event(event_ptr) {
+                if (events.length > 0) {
+                    const event = new Uint8Array(events[events.length - 1])
+
+                    let i = 0
+                    for (const b of event) {
+                        memView.setUint8(event_ptr + i, b)
+                        i += 1
+                    }
+
+                    events.pop()
+                } else {
+                    memView.setUint8(event_ptr, 0)
+                }
             }
         },
     }
@@ -205,11 +285,6 @@ async function main() {
     memView = new DataView(memory)
 
     // init
-
-    let resized = false
-    window.addEventListener("resize", function() {
-        resized = true
-    })
 
     resizeCanvas(canvas, canvasCtx)
 
@@ -234,13 +309,11 @@ async function main() {
 
         canvasCtx.clearRect(0, 0, canvasWidth, canvasHeight)
 
-        if (resized) {
-            resizeCanvas(canvas, canvasCtx)
-            resized = false
-        }
-
         if (exports.step) {
-            exports.step(dt)
+            const _continue = exports.step(dt)
+            if (!_continue) {
+                return
+            }
         }
 
         const frameEnd = performance.now()
