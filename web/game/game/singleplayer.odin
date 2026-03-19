@@ -101,7 +101,7 @@ sp_queue_init :: proc(queue: ^SP_Queue) {
 }
 
 sp_queue_next :: proc(queue: ^SP_Queue) -> TetrominoKind {
-	if queue.index == 5 {
+	if queue.index == 6 {
 		kind := queue.bag[6]
 		sp_queue_init(queue)
 		return kind
