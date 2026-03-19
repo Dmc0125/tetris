@@ -1,7 +1,9 @@
-package main
+package game
 
 import "core:fmt"
 import "core:math/rand"
+
+import platform "../platform"
 
 Clock :: struct {
 	time:       f64,
@@ -17,17 +19,6 @@ clock_frame_start :: proc(clock: ^Clock, delta_time: f64) {
 	clock.time += delta_time * clock.multiplier
 }
 
-TetrominoKind :: enum u8 {
-	None,
-	I,
-	O,
-	L,
-	J,
-	S,
-	Z,
-	T,
-}
-
 Coords :: struct {
 	col, row: int,
 }
@@ -36,28 +27,6 @@ coords_vec :: proc(coords: Coords) -> (v: Vec2) {
 	v.x = f32(coords.col)
 	v.y = f32(coords.row)
 	return
-}
-
-tetromino_coords := [TetrominoKind][4]Coords {
-	.None = {},
-	.I    = {{0, 1}, {1, 1}, {2, 1}, {3, 1}},
-	.O    = {{0, 0}, {1, 0}, {0, 1}, {1, 1}},
-	.L    = {{1, 0}, {1, 1}, {1, 2}, {2, 2}},
-	.J    = {{1, 0}, {1, 1}, {1, 2}, {0, 2}},
-	.S    = {{0, 1}, {1, 1}, {1, 0}, {2, 0}},
-	.Z    = {{0, 0}, {1, 0}, {1, 1}, {2, 1}},
-	.T    = {{0, 0}, {1, 0}, {2, 0}, {1, 1}},
-}
-
-tetromino_cubes := [TetrominoKind]Cube {
-	.None = {},
-	.I    = .Cyan,
-	.O    = .Yellow,
-	.L    = .Blue,
-	.J    = .Orange,
-	.S    = .Pink,
-	.Z    = .Sand,
-	.T    = .Purple,
 }
 
 Tetromino :: struct {
@@ -164,9 +133,7 @@ Singleplayer :: struct {
 	filled_cells: [dynamic]Cube,
 }
 
-singleplayer_init :: proc(ctx: ^Context, allocator := context.allocator) {
-	sp := &ctx.singleplayer
-
+singleplayer_init :: proc(sp: ^Singleplayer, window_size: Vec2, allocator := context.allocator) {
 	// sizes
 
 	sp.cols = 10
@@ -192,14 +159,14 @@ singleplayer_init :: proc(ctx: ^Context, allocator := context.allocator) {
 	clock_init(&sp.clock)
 
 	time_text_size: Vec2
-	measure_text(&time_text_size, "999:99:99.99")
+	platform.measure_text(&time_text_size, "999:99:99.99")
 	sp.time_rect.zw = time_text_size
 
 	// queue
 
 	sp.queue_rect.zw = 4 * CUBE_SIZE
 
-	singleplayer_layout(ctx)
+	singleplayer_layout(sp, window_size)
 
 	// tetromino and queue
 
@@ -207,10 +174,8 @@ singleplayer_init :: proc(ctx: ^Context, allocator := context.allocator) {
 	tetromino_init(&sp.tetromino, sp_queue_next(&sp.queue), sp)
 }
 
-singleplayer_layout :: proc(ctx: ^Context) {
-	sp := &ctx.singleplayer
-
-	sp.rect.xy = ctx.window_size / 2 - sp.rect.zw / 2
+singleplayer_layout :: proc(sp: ^Singleplayer, window_size: Vec2) {
+	sp.rect.xy = window_size / 2 - sp.rect.zw / 2
 	sp.game_rect.xy = sp.rect.xy + sp.rect.zw / 2 - sp.game_rect.zw / 2
 
 	game_end := sp.game_rect.x + sp.game_rect.z
@@ -236,8 +201,7 @@ is_cell_filled :: proc(coords: Coords, sp: ^Singleplayer) -> (collided: bool) {
 	return
 }
 
-singleplayer_update :: proc(ctx: ^Context) {
-	sp := &ctx.singleplayer
+singleplayer_update :: proc(sp: ^Singleplayer) {
 	updated := false
 
 	switch sp.state {
@@ -323,21 +287,19 @@ singleplayer_update :: proc(ctx: ^Context) {
 	}
 }
 
-singleplayer_draw :: proc(ctx: ^Context) {
-	sp := &ctx.singleplayer
-
+singleplayer_draw :: proc(sp: ^Singleplayer) {
 	// bg
-	fill_rect(&sp.rect, &Color{0.15, 0.15, 0.3, 1})
+	platform.fill_rect(&sp.rect, &Color{0.15, 0.15, 0.3, 1})
 
 	switch sp.state {
 	case .None:
 	case .Countdown:
 		countdown_text := fmt.tprintf("%d", sp.countdown)
 		countdown_text_size: Vec2
-		measure_text(&countdown_text_size, countdown_text)
+		platform.measure_text(&countdown_text_size, countdown_text)
 
 		pos := sp.rect.xy + sp.rect.zw / 2 - countdown_text_size.xy / 2
-		fill_text(&pos, &Color{1, 1, 1, 1}, countdown_text)
+		platform.fill_text(&pos, &Color{1, 1, 1, 1}, countdown_text)
 	case .Game:
 		{ 	// padding horizontal
 			for i in 0 ..< 2 + sp.cols {
@@ -383,7 +345,10 @@ singleplayer_draw :: proc(ctx: ^Context) {
 				for c in sp.tetromino.coords {
 					cv := coords_vec(c)
 					pos := projection_pos + cv * CUBE_SIZE
-					draw_rect(&Rect{pos.x, pos.y, CUBE_SIZE, CUBE_SIZE}, &Color{0.6, 0.6, 0.6, 1})
+					platform.draw_rect(
+						&Rect{pos.x, pos.y, CUBE_SIZE, CUBE_SIZE},
+						&Color{0.6, 0.6, 0.6, 1},
+					)
 				}
 			}
 		}
@@ -411,14 +376,14 @@ singleplayer_draw :: proc(ctx: ^Context) {
 			text := fmt.tprintf("%02d:%02d:%05.2f", hours, minutes, seconds)
 
 			text_size: Vec2
-			measure_text(&text_size, text)
+			platform.measure_text(&text_size, text)
 
 			pos := sp.time_rect.xy + sp.time_rect.zw - text_size
-			fill_text(&pos, &Color{0.8, 0.8, 0.8, 1}, text)
+			platform.fill_text(&pos, &Color{0.8, 0.8, 0.8, 1}, text)
 		}
 
 		{ 	// queue
-			draw_rect(&sp.queue_rect, &Color{0.8, 0.8, 0.8, 1})
+			platform.draw_rect(&sp.queue_rect, &Color{0.8, 0.8, 0.8, 1})
 
 			next := sp.queue.bag[sp.queue.index]
 			coords := tetromino_coords[next]
@@ -431,7 +396,7 @@ singleplayer_draw :: proc(ctx: ^Context) {
 	}
 }
 
-singleplayer_process_event :: proc(ctx: ^Context, event: ^Event) {
+singleplayer_process_event :: proc(sp: ^Singleplayer, event: ^platform.Event) {
 	tetromino_rotate :: proc(tetromino: ^Tetromino) -> (rotated: bool) {
 		#partial switch tetromino.kind {
 		case .None:
@@ -477,10 +442,9 @@ singleplayer_process_event :: proc(ctx: ^Context, event: ^Event) {
 		return
 	}
 
-	if ctx.singleplayer.state == .Game {
+	if sp.state == .Game {
 		#partial switch event.kind {
 		case .Keydown:
-			sp := &ctx.singleplayer
 			#partial switch event.keyboard.key {
 			case .DOWN:
 				sp.clock.multiplier = 20
@@ -535,7 +499,6 @@ singleplayer_process_event :: proc(ctx: ^Context, event: ^Event) {
 				}
 			}
 		case .Keyup:
-			sp := &ctx.singleplayer
 			#partial switch event.keyboard.key {
 			case .DOWN:
 				sp.clock.multiplier = 1
