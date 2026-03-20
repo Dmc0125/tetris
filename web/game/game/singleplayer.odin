@@ -238,15 +238,9 @@ singleplayer_layout :: proc(sp: ^Singleplayer, window_size: Vec2) {
 	sp.queue_rect.y = sp.time_rect.y + padding
 }
 
-is_cell_filled :: proc(coords: Coords, sp: ^Singleplayer) -> (collided: bool) {
-	row_idx := coords.row * sp.cols
-	row_cells := sp.filled_cells[row_idx:row_idx + sp.cols]
-
-	for rc, i in row_cells do if rc != .None && i == coords.col {
-		collided = true
-		break
-	}
-
+is_cell_filled :: proc(coords: Coords, sp: ^Singleplayer) -> (filled: bool) {
+	idx := coords.row * sp.cols + coords.col
+	filled = sp.filled_cells[idx] != .None
 	return
 }
 
@@ -325,6 +319,9 @@ singleplayer_update :: proc(sp: ^Singleplayer) {
 						// this row is filled, need to move all the prev elements
 						// to this row
 						copy(sp.filled_cells[from_idx:], sp.filled_cells[to_idx:])
+						for i in len(sp.filled_cells) - sp.cols ..< len(sp.filled_cells) {
+							sp.filled_cells[i] = .None
+						}
 					}
 				}
 			}
