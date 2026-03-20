@@ -230,7 +230,7 @@ async function main() {
             },
             draw_rect(rect_ptr, color_ptr) {
                 const rect = new Float32Array(memory, rect_ptr, 4)
-                canvasCtx.fillStyle = readColor(memory, color_ptr)
+                canvasCtx.strokeStyle = readColor(memory, color_ptr)
                 canvasCtx.strokeRect(rect[0], rect[1], rect[2], rect[3])
             },
             fill_rect(rect_ptr, color_ptr) {

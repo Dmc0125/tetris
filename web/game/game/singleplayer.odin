@@ -31,6 +31,7 @@ coords_vec :: proc(coords: Coords) -> (v: Vec2) {
 
 Tetromino :: struct {
 	kind:           TetrominoKind,
+	rotation:       int,
 	pos:            Coords,
 	projection_pos: Coords,
 	coords:         [4]Coords,
@@ -38,11 +39,16 @@ Tetromino :: struct {
 
 tetromino_init :: proc(tetromino: ^Tetromino, kind: TetrominoKind, sp: ^Singleplayer) {
 	tetromino.kind = kind
-	tetromino.coords = tetromino_coords[kind]
-	tetromino.pos = Coords{3, 0}
+	tetromino.rotation = 0
+	tetromino.coords = tetromino_coords[kind][0]
+
+	tetromino.pos.row = 19
+
 	#partial switch kind {
 	case .O:
-		tetromino.pos = Coords{4, 0}
+		tetromino.pos.col = 4
+	case:
+		tetromino.pos.col = 3
 	}
 
 	tetromino_project(tetromino, sp)
@@ -52,33 +58,76 @@ tetromino_project :: proc(tetromino: ^Tetromino, sp: ^Singleplayer) {
 	pos := tetromino.pos
 
 	outer: for {
-		for c in tetromino.coords {
-			abs_col, abs_row := c.col + pos.col, c.row + pos.row
-
-			if abs_row >= sp.rows {
-				pos.row -= 1
+		for c in tetromino_abs_coords(tetromino.coords, pos) {
+			if c.row < 0 {
+				pos.row += 1
 				break outer
 			}
 
-			idx := abs_row * sp.cols + abs_col
+			idx := c.row * sp.cols + c.col
 			cell := sp.filled_cells[idx]
 
 			if cell != .None {
-				pos.row -= 1
+				pos.row += 1
 				break outer
 			}
 		}
 
-		pos.row += 1
+		pos.row -= 1
 	}
 
 	tetromino.projection_pos = pos
 }
 
-tetromino_abs_coords :: proc(tetromino: ^Tetromino) -> (coords: [4]Coords) {
-	for c, i in tetromino.coords {
-		coords[i].col = c.col + tetromino.pos.col
-		coords[i].row = c.row + tetromino.pos.row
+tetromino_rotate :: proc(t: ^Tetromino, sp: ^Singleplayer) {
+	nrotation := (t.rotation + 1) % 4
+	ncoords := tetromino_coords[t.kind][nrotation]
+
+	if t.kind != .O {
+		npos: Coords
+		retries := 0
+
+		for ; retries < 5; retries += 1 {
+			offsets: Coords
+			#partial switch t.kind {
+			case .I:
+				offsets = tetromino_i_rotations_offsets[t.rotation][retries]
+			case:
+				offsets = tetromino_rotations_offsets[t.rotation][retries]
+			}
+
+			npos.col = t.pos.col + offsets.col
+			npos.row = t.pos.row + offsets.row
+
+			collision := false
+
+			for c in tetromino_abs_coords(ncoords, npos) {
+				if (c.col < 0 || c.col >= sp.cols) ||
+				   (c.row < 0 || c.row >= sp.rows) ||
+				   is_cell_filled(c, sp) {
+					collision = true
+					break
+				}
+			}
+
+			if !collision {
+				t.pos = npos
+				t.coords = ncoords
+				t.rotation = nrotation
+
+				tetromino_project(t, sp)
+				break
+			}
+		}
+	}
+
+	return
+}
+
+tetromino_abs_coords :: proc(coords: [4]Coords, pos: Coords) -> (abs_coords: [4]Coords) {
+	for c, i in coords {
+		abs_coords[i].col = pos.col + c.col
+		abs_coords[i].row = pos.row - c.row
 	}
 	return
 }
@@ -233,22 +282,22 @@ singleplayer_update :: proc(sp: ^Singleplayer) {
 
 			// move tetromino
 
-			sp.tetromino.pos.row += 1
+			sp.tetromino.pos.row -= 1
 
 			tetromino := &sp.tetromino
 			collided := false
 
 			// check collision with bottom and filled cells
-			for c in tetromino_abs_coords(tetromino) do if c.row > sp.rows - 1 || is_cell_filled(c, sp) {
+			for c in tetromino_abs_coords(tetromino.coords, tetromino.pos) do if c.row < 0 || is_cell_filled(c, sp) {
 				collided = true
 				break
 			}
 
 			if collided {
 				// put cells to the filled cells
-				tetromino.pos.row -= 1
+				tetromino.pos.row += 1
 
-				for c in tetromino_abs_coords(tetromino) {
+				for c in tetromino_abs_coords(tetromino.coords, tetromino.pos) {
 					idx := c.row * sp.cols + c.col
 					sp.filled_cells[idx] = tetromino_cubes[tetromino.kind]
 				}
@@ -257,7 +306,11 @@ singleplayer_update :: proc(sp: ^Singleplayer) {
 				tetromino.kind = .None
 
 				// delete filled rows
-				for row in 0 ..< sp.rows {
+				//
+				// 2: ---xx--x-x -> checked
+				// 1: xxxxxxxxxx -> found filled; row = 1 => dst: [row * sp.cols:], src: [row * sp.cols + sp.cols:]
+				// 0: xx--xx-x--
+				for row := sp.rows - 1; row >= 0; row -= 1 {
 					from_idx := row * sp.cols
 					to_idx := from_idx + sp.cols
 					row_cells := sp.filled_cells[from_idx:to_idx]
@@ -271,7 +324,7 @@ singleplayer_update :: proc(sp: ^Singleplayer) {
 					if filled {
 						// this row is filled, need to move all the prev elements
 						// to this row
-						copy(sp.filled_cells[sp.cols:to_idx], sp.filled_cells[:from_idx])
+						copy(sp.filled_cells[from_idx:], sp.filled_cells[to_idx:])
 					}
 				}
 			}
@@ -301,52 +354,58 @@ singleplayer_draw :: proc(sp: ^Singleplayer) {
 		pos := sp.rect.xy + sp.rect.zw / 2 - countdown_text_size.xy / 2
 		platform.fill_text(&pos, &Color{1, 1, 1, 1}, countdown_text)
 	case .Game:
-		{ 	// padding horizontal
-			for i in 0 ..< 2 + sp.cols {
-				x := sp.game_rect.x + f32(i * CUBE_SIZE)
+		// padding horizontal
+		for i in 0 ..< 2 + sp.cols {
+			p := sp.game_rect.xy
+			p.x += f32(i * CUBE_SIZE)
 
-				// upper
-				y := sp.game_rect.y
-				draw_cube(.Gray, Vec2{x, y})
+			// upper
+			draw_cube(.Gray, p)
 
-				// lower
-				y += f32(sp.rows + 1) * CUBE_SIZE
-				draw_cube(.Gray, Vec2{x, y})
-			}
+			// lower
+			p.y += f32(sp.rows + 1) * CUBE_SIZE
+			draw_cube(.Gray, p)
 		}
 
 		// padding vertical
 		for i in 0 ..< sp.rows {
-			y := sp.game_rect.y + CUBE_SIZE + f32(i) * CUBE_SIZE
+			p := sp.game_rect.xy
+			p.y += CUBE_SIZE + f32(i) * CUBE_SIZE
 
 			// left
-			x := sp.game_rect.x
-			draw_cube(.Gray, Vec2{x, y})
+			draw_cube(.Gray, p)
 
-			x += f32(sp.cols + 1) * CUBE_SIZE
-			draw_cube(.Gray, Vec2{x, y})
+			p.x += f32(sp.cols + 1) * CUBE_SIZE
+			draw_cube(.Gray, p)
 		}
 
+		// NOTE: Y coordinate in game is rising while going up
 		{ 	// tetromino and projection
-			tetromino := sp.tetromino
+			t := sp.tetromino
 
-			if tetromino.kind != .None {
+			if t.kind != .None {
+				// NOTE: when drawing origin is in the top left, so we can not
+				// add CUBE_SIZE to y
 				start_pos := sp.game_rect.xy + CUBE_SIZE
-				tetromino_pos := start_pos + coords_vec(tetromino.pos) * CUBE_SIZE
+				start_pos.y += CUBE_SIZE * f32(sp.rows - 1)
 
-				for c in sp.tetromino.coords {
-					cv := coords_vec(c)
-					pos := tetromino_pos + cv * CUBE_SIZE
-					draw_cube(tetromino_cubes[tetromino.kind], pos)
+				// tetromino
+				for c in tetromino_abs_coords(t.coords, t.pos) {
+					offset := coords_vec(c) * CUBE_SIZE
+					p := start_pos
+					p.x += offset.x
+					p.y -= offset.y
+					draw_cube(tetromino_cubes[t.kind], p)
 				}
 
-				projection_pos := start_pos + coords_vec(tetromino.projection_pos) * CUBE_SIZE
-
-				for c in sp.tetromino.coords {
-					cv := coords_vec(c)
-					pos := projection_pos + cv * CUBE_SIZE
+				// projection
+				for c in tetromino_abs_coords(t.coords, t.projection_pos) {
+					offset := coords_vec(c) * CUBE_SIZE
+					p := start_pos
+					p.x += offset.x
+					p.y -= offset.y
 					platform.draw_rect(
-						&Rect{pos.x, pos.y, CUBE_SIZE, CUBE_SIZE},
+						&Rect{p.x, p.y, CUBE_SIZE, CUBE_SIZE},
 						&Color{0.6, 0.6, 0.6, 1},
 					)
 				}
@@ -354,14 +413,16 @@ singleplayer_draw :: proc(sp: ^Singleplayer) {
 		}
 
 		{ 	// filled cells
-			start := sp.game_rect.xy + CUBE_SIZE
+			start_pos := sp.game_rect.xy
+			start_pos.x += CUBE_SIZE
+			start_pos.y += CUBE_SIZE * f32(sp.rows)
 
 			for fc, i in sp.filled_cells do if fc != .None {
 				col := i % sp.cols
 				row := i / sp.cols
 
-				x := start.x + f32(col) * CUBE_SIZE
-				y := start.y + f32(row) * CUBE_SIZE
+				x := start_pos.x + f32(col) * CUBE_SIZE
+				y := start_pos.y - f32(row) * CUBE_SIZE
 				draw_cube(fc, Vec2{x, y})
 			}
 		}
@@ -386,7 +447,7 @@ singleplayer_draw :: proc(sp: ^Singleplayer) {
 			platform.draw_rect(&sp.queue_rect, &Color{0.8, 0.8, 0.8, 1})
 
 			next := sp.queue.bag[sp.queue.index]
-			coords := tetromino_coords[next]
+			coords := tetromino_coords[next][0]
 
 			for c in coords {
 				dst := coords_vec(c) * CUBE_SIZE + sp.queue_rect.xy
@@ -397,51 +458,6 @@ singleplayer_draw :: proc(sp: ^Singleplayer) {
 }
 
 singleplayer_process_event :: proc(sp: ^Singleplayer, event: ^platform.Event) {
-	tetromino_rotate :: proc(tetromino: ^Tetromino) -> (rotated: bool) {
-		#partial switch tetromino.kind {
-		case .None:
-		case .O:
-		// no rotation
-		case .I:
-			rotated = true
-
-			for c, i in tetromino.coords {
-				// double
-				x := 2 * c.col
-				y := 2 * c.row
-
-				// translate
-				x -= 3
-				y -= 3
-
-				// rotate
-				x2 := y
-				y2 := -x
-
-				// translate back
-				x2 += 3
-				y2 += 3
-
-				tetromino.coords[i] = {x2 / 2, y2 / 2}
-			}
-		case:
-			rotated = true
-			c := tetromino.coords
-
-			tetromino.coords[0].col = 2 - tetromino.coords[0].row
-			tetromino.coords[1].col = 2 - tetromino.coords[1].row
-			tetromino.coords[2].col = 2 - tetromino.coords[2].row
-			tetromino.coords[3].col = 2 - tetromino.coords[3].row
-
-			tetromino.coords[0].row = c[0].col
-			tetromino.coords[1].row = c[1].col
-			tetromino.coords[2].row = c[2].col
-			tetromino.coords[3].row = c[3].col
-		}
-
-		return
-	}
-
 	if sp.state == .Game {
 		#partial switch event.kind {
 		case .Keydown:
@@ -450,14 +466,7 @@ singleplayer_process_event :: proc(sp: ^Singleplayer, event: ^platform.Event) {
 				sp.clock.multiplier = 20
 			case .UP:
 				if sp.tetromino.kind != .None {
-					rotated := tetromino_rotate(&sp.tetromino)
-
-					if rotated {
-						// check collision and do kicks
-
-						// project
-						tetromino_project(&sp.tetromino, sp)
-					}
+					tetromino_rotate(&sp.tetromino, sp)
 				}
 			case .LEFT:
 				if sp.tetromino.kind != .None {
@@ -466,7 +475,7 @@ singleplayer_process_event :: proc(sp: ^Singleplayer, event: ^platform.Event) {
 					collision := false
 
 					// check collision with left side and filled cells
-					for c in tetromino_abs_coords(t) do if c.col < 0 || is_cell_filled(c, sp) {
+					for c in tetromino_abs_coords(t.coords, t.pos) do if c.col < 0 || is_cell_filled(c, sp) {
 						collision = true
 						break
 					}
@@ -485,7 +494,7 @@ singleplayer_process_event :: proc(sp: ^Singleplayer, event: ^platform.Event) {
 					collision := false
 
 					// check collision with right side and filled cells
-					for c in tetromino_abs_coords(t) do if c.col >= sp.cols || is_cell_filled(c, sp) {
+					for c in tetromino_abs_coords(t.coords, t.pos) do if c.col >= sp.cols || is_cell_filled(c, sp) {
 						collision = true
 						break
 					}
