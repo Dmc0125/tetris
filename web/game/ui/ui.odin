@@ -16,7 +16,7 @@ Alignment :: enum {
 	End,
 }
 
-center_screen_left_top_origin :: proc(container: Vec2, child: ^Rect) {
+center_in_size :: proc(container: Vec2, child: ^Rect) {
 	child.xy = container / 2 - child.zw / 2
 }
 
@@ -25,24 +25,20 @@ center_in_container :: proc(container: Rect, child: ^Rect) {
 }
 
 center :: proc {
-	center_screen_left_top_origin,
+	center_in_size,
 	center_in_container,
 }
 
 Element :: union {
-	^Vertical_Stack,
-	^Horizontal_Stack,
+	^Block,
 	^Button,
 	^Text,
 	^Text_Mono,
-	^Card,
 }
 
 element_rect :: proc(element: Element) -> (r: ^Rect) {
 	switch c in element {
-	case ^Vertical_Stack:
-		r = &c.rect
-	case ^Horizontal_Stack:
+	case ^Block:
 		r = &c.rect
 	case ^Button:
 		r = &c.rect
@@ -50,18 +46,14 @@ element_rect :: proc(element: Element) -> (r: ^Rect) {
 		r = &c.rect
 	case ^Text_Mono:
 		r = &c.rect
-	case ^Card:
-		r = &c.rect
 	}
 	return
 }
 
 element_layout :: proc(element: Element) {
 	#partial switch c in element {
-	case ^Vertical_Stack:
-		vertical_stack_layout(c)
-	case ^Horizontal_Stack:
-		horizontal_stack_layout(c)
+	case ^Block:
+		block_layout(c)
 	}
 }
 
@@ -70,161 +62,161 @@ Child :: struct {
 	next:    ^Child,
 }
 
-// vertically stacked elements centered around x axis
-Vertical_Stack :: struct {
+Modifiers :: enum {
+	Background,
+	Border,
+}
+
+Modifiers_Flags :: bit_set[Modifiers]
+
+draw_rect :: proc(rect: Rect, flags: Modifiers_Flags, clr_bg := Color{}, clr_border := Color{}) {
+	r := rect
+
+	if .Background in flags {
+		c := clr_bg
+		platform.fill_rect(&r, &c)
+	}
+
+	if .Border in flags {
+		c := clr_border
+		platform.draw_rect(&r, &c)
+	}
+}
+
+Block_Direction :: enum {
+	Horizontal,
+	Vertical,
+}
+
+Block :: struct {
 	allocator:  runtime.Allocator,
 
-	// absolute position on the screen and size of children
+	//
 	rect:       Rect,
-	// verical spacing between elements
+	fixed_size: bool,
+	padding:    f32,
+	// spacing between elements
 	spacing:    f32,
-	// horizontal alignment of children
+	// placement of children
+	direction:  Block_Direction,
+	// alignment of children based on direction
 	alignment:  Alignment,
 
-	//
+	// children
 	last_child: ^Child,
 	children:   ^Child,
 }
 
-vertical_stack_init :: proc(
-	stack: ^Vertical_Stack,
-	pos: Vec2,
-	spacing: f32,
-	alignment: Alignment,
+block_init :: proc(
+	block: ^Block,
+	direction: Block_Direction,
+	rect := Rect{},
+	padding: f32 = 0,
+	spacing: f32 = 0,
+	alignment: Alignment = .Start,
 	allocator := context.allocator,
 ) {
-	stack.rect.xy = pos
-	stack.spacing = spacing
-	stack.alignment = alignment
-	stack.allocator = allocator
-}
+	block.rect = rect
+	block.fixed_size = rect.zw != 0
 
-vertical_stack_add :: proc(stack: ^Vertical_Stack, element: Element) {
-	// save child
-	c := new(Child, allocator = stack.allocator)
-	c.element = element
-
-	if stack.last_child == nil {
-		stack.last_child = c
-		stack.children = c
-	} else {
-		stack.last_child.next = c
-		stack.last_child = c
+	if !block.fixed_size {
+		block.rect.zw = padding * 2
 	}
 
-	// update size
-	el_rect := element_rect(element)
-	stack.rect.z = max(stack.rect.z, el_rect.z)
-	stack.rect.w += el_rect.w + stack.spacing
+	block.padding = padding
+	block.spacing = spacing
+
+	block.direction = direction
+	block.alignment = alignment
+
+	block.allocator = allocator
 }
 
-// sets the absolute position on the screen of all children
-// !! expects the stack position to be set
-vertical_stack_layout :: proc(stack: ^Vertical_Stack) {
-	// calc screen position of children
-	child := stack.children
-	cursor := stack.rect.xy
+block_add_child :: proc(block: ^Block, child: Element) {
+	// save child
+	c := new(Child, allocator = block.allocator)
+	c.element = child
+	first_child := block.last_child == nil
+
+	if first_child {
+		block.last_child = c
+		block.children = c
+	} else {
+		block.last_child.next = c
+		block.last_child = c
+	}
+
+	// calc block width
+	if !block.fixed_size {
+		c_rect := element_rect(child)
+
+		if first_child {
+			switch block.direction {
+			case .Vertical:
+				block.rect.z = max(block.rect.z, c_rect.z + block.padding * 2)
+				block.rect.w += c_rect.w
+			case .Horizontal:
+				block.rect.z += c_rect.z
+				block.rect.w = max(block.rect.w, c_rect.w + block.padding * 2)
+			}
+		} else {
+			switch block.direction {
+			case .Vertical:
+				block.rect.z = max(block.rect.z, c_rect.z + block.padding * 2)
+				block.rect.w += c_rect.w + block.spacing
+			case .Horizontal:
+				block.rect.z += c_rect.z + block.spacing
+				block.rect.w = max(block.rect.w, c_rect.w + block.padding * 2)
+			}
+		}
+	}
+}
+
+block_layout :: proc(block: ^Block) {
+	cursor := block.rect.xy + block.padding
+	child := block.children
 
 	for child != nil {
-		el_rect := element_rect(child.element)
+		c_rect := element_rect(child.element)
 
-		// calc position
-		el_rect.xy = cursor
-		switch stack.alignment {
+		// child position
+		c_rect.xy = cursor
+
+		switch block.alignment {
 		case .Start:
 		case .Center:
-			el_rect.x += stack.rect.z / 2 - el_rect.z / 2
+			switch block.direction {
+			case .Vertical:
+				// center on x axis
+				c_rect.x += block.rect.z / 2 - c_rect.z / 2
+			case .Horizontal:
+				// center on y axis
+				c_rect.y += block.rect.w / 2 - c_rect.w / 2
+			}
 		case .End:
-			el_rect.x += stack.rect.z - el_rect.z
+			switch block.direction {
+			case .Vertical:
+				// center on x axis
+				c_rect.x += block.rect.z - c_rect.z
+			case .Horizontal:
+				// center on y axis
+				c_rect.y += block.rect.w - c_rect.w
+			}
 		}
 
 		// advance
-		cursor.y += el_rect.w + stack.spacing
-		child = child.next
-	}
-
-	// calc layout for children
-	child = stack.children
-	for child != nil {
-		element_layout(child.element)
-		child = child.next
-	}
-}
-
-Horizontal_Stack :: struct {
-	allocator:  runtime.Allocator,
-
-	// absolute position on the screen and size of children
-	rect:       Rect,
-	// verical spacing between elements
-	spacing:    f32,
-	// vertical alignment of children
-	alignment:  Alignment,
-
-	//
-	last_child: ^Child,
-	children:   ^Child,
-}
-
-horizontal_stack_init :: proc(
-	stack: ^Horizontal_Stack,
-	pos: Vec2,
-	spacing: f32,
-	alignment: Alignment,
-	allocator := context.allocator,
-) {
-	stack.allocator = allocator
-	stack.rect.xy = pos
-	stack.spacing = spacing
-	stack.alignment = alignment
-}
-
-horizontal_stack_add :: proc(stack: ^Horizontal_Stack, element: Element) {
-	// save child
-	c := new(Child, allocator = stack.allocator)
-	c.element = element
-
-	if stack.last_child == nil {
-		stack.last_child = c
-		stack.children = c
-	} else {
-		stack.last_child.next = c
-		stack.last_child = c
-	}
-
-	// update size
-	el_rect := element_rect(element)
-	stack.rect.z += el_rect.z + stack.spacing
-	stack.rect.w = max(stack.rect.w, el_rect.w)
-}
-
-// sets the absolute position on the screen of all children
-// !! expects the stack position to be set
-horizontal_stack_layout :: proc(stack: ^Horizontal_Stack) {
-	// calc positions
-	child := stack.children
-	cursor := stack.rect.xy
-
-	for child != nil {
-		el_rect := element_rect(child.element)
-
-		// calc position
-		el_rect.xy = cursor
-		switch stack.alignment {
-		case .Start:
-		case .Center:
-			el_rect.y += stack.rect.w / 2 - el_rect.w / 2
-		case .End:
-			el_rect.y += stack.rect.w - el_rect.w
+		switch block.direction {
+		case .Vertical:
+			cursor.y += c_rect.w + block.spacing
+		case .Horizontal:
+			cursor.x += c_rect.z + block.spacing
 		}
-
-		// advance
-		cursor.x += el_rect.z + stack.spacing
 		child = child.next
 	}
 
-	// calc layouts
-	child = stack.children
+	// children layouts
+	child = block.children
+
 	for child != nil {
 		element_layout(child.element)
 		child = child.next
@@ -332,18 +324,4 @@ text_mono_draw :: proc(text_mono: ^Text_Mono) {
 		pos := char_rect.xy
 		platform.fill_text(&pos, &text_mono.clr, char)
 	}
-}
-
-Card :: struct {
-	rect:     Rect,
-	clr_fill: Color,
-}
-
-card_init :: proc(card: ^Card, rect: Rect, clr_fill: Color) {
-	card.rect = rect
-	card.clr_fill = clr_fill
-}
-
-card_draw :: proc(card: ^Card) {
-	platform.fill_rect(&card.rect, &card.clr_fill)
 }

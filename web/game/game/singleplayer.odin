@@ -164,36 +164,49 @@ sp_queue_next :: proc(queue: ^SP_Queue) -> TetrominoKind {
 }
 
 Singleplayer :: struct {
-	perm_allocator:  runtime.Allocator,
-	temp_allocator:  runtime.Allocator,
+	perm_allocator:          runtime.Allocator,
+	temp_allocator:          runtime.Allocator,
 
 	// ui
-	countdown_texts: [3]ui.Text,
-	board:           ui.Card,
-	score_card:      ui.Card,
-	time_text:       ui.Text_Mono,
-	queue_stack:     ui.Vertical_Stack,
-	queue_header:    ui.Text,
-	queue_card:      ui.Card,
+	countdown_texts:         [3]ui.Text,
+	// left side
+	score_block:             ui.Block,
+	score_header:            ui.Text,
+	score_text:              ui.Text_Mono,
+	// board
+	board:                   ui.Block,
+	// right side
+	time_text:               ui.Text_Mono,
+	queue_block:             ui.Block,
+	queue_header:            ui.Text,
+	queue_tetromino_block:   ui.Block,
+
+	// ui clrs
+	clr_card_bg:             Color,
+	clr_card_border:         Color,
 
 	//
-	clock:           Clock,
-	last_update:     f64,
-	timestep:        f64,
-	state:           SingleplayerState,
-	countdown:       int,
+	clock:                   Clock,
+	last_update:             f64,
+	timestep:                f64,
+	state:                   SingleplayerState,
+	countdown:               int,
 
 	// game
-	cols, rows:      int,
-	queue:           SP_Queue,
-	tetromino:       Tetromino,
-	filled_cells:    [dynamic]Cube,
+	cols, rows:              int,
+	queue:                   SP_Queue,
+	tetromino:               Tetromino,
+	filled_cells:            [dynamic]Cube,
+	rows_score:              f32,
+	default_time_multiplier: f64,
 }
 
 sp_init :: proc(
 	sp: ^Singleplayer,
 	window_size: Vec2,
 	clr_text: Color,
+	clr_card_bg: Color,
+	clr_card_border: Color,
 	perm_allocator := context.allocator,
 	temp_allocator := context.temp_allocator,
 ) {
@@ -209,17 +222,8 @@ sp_init :: proc(
 	sp_queue_init(&sp.queue)
 	tetromino_init(&sp.tetromino, sp_queue_next(&sp.queue), sp)
 
-	// left side
-	ui.card_init(&sp.score_card, Rect{0, 0, 100, 100}, Color{0, 1, 0, 1})
-
-	// board
-
-	board_width := f32(sp.cols + 2) * CUBE_SIZE
-	board_height := f32(sp.rows + 2) * CUBE_SIZE
-	ui.card_init(&sp.board, Rect{0, 0, board_width, board_height}, Color{1, 0, 0, 1})
-
-	//
-	// right side
+	sp.clr_card_bg = clr_card_bg
+	sp.clr_card_border = clr_card_border
 
 	// countdown
 
@@ -229,50 +233,105 @@ sp_init :: proc(
 	ui.text_init(&sp.countdown_texts[1], "2", clr_text)
 	ui.text_init(&sp.countdown_texts[2], "3", clr_text)
 
+	// left side
+
+	ui.block_init(
+		&sp.score_block,
+		.Vertical,
+		Rect{0, 0, 120, 120},
+		padding = 20,
+		spacing = 10,
+		alignment = .Start,
+		allocator = perm_allocator,
+	)
+
+	ui.text_init(&sp.score_header, "Score", clr_text)
+	ui.block_add_child(&sp.score_block, &sp.score_header)
+
+	ui.text_mono_init(&sp.score_text, "000000", clr_text)
+	ui.block_add_child(&sp.score_block, &sp.score_text)
+
+	// board
+
+	board_width := f32(sp.cols + 2) * CUBE_SIZE
+	board_height := f32(sp.rows + 2) * CUBE_SIZE
+	ui.block_init(&sp.board, .Vertical, Rect{0, 0, board_width, board_height})
+
+	//
+	// right side
+
 	// time
 
 	sp.timestep = 1
+	sp.default_time_multiplier = 1
 	clock_init(&sp.clock)
 
 	ui.text_mono_init(&sp.time_text, "00:00:00.00", clr_text)
 
 	{ 	// queue
-		ui.vertical_stack_init(&sp.queue_stack, Vec2{}, 10, .Start, perm_allocator)
+		size :: 4 * CUBE_SIZE
+
+		ui.block_init(
+			&sp.queue_block,
+			.Vertical,
+			Rect{0, 0, sp.time_text.rect.z, 120},
+			padding = 20,
+			spacing = 10,
+			alignment = .Start,
+			allocator = perm_allocator,
+		)
 
 		ui.text_init(&sp.queue_header, "Next", clr_text)
-		ui.vertical_stack_add(&sp.queue_stack, &sp.queue_header)
+		ui.block_add_child(&sp.queue_block, &sp.queue_header)
 
-		size :: 4 * CUBE_SIZE
-		ui.card_init(&sp.queue_card, Rect{0, 0, size, size}, Color{1, 0, 0, 1})
-		ui.vertical_stack_add(&sp.queue_stack, &sp.queue_card)
+		ui.block_init(&sp.queue_tetromino_block, .Vertical, Rect{0, 0, size, size})
+		ui.block_add_child(&sp.queue_block, &sp.queue_tetromino_block)
 	}
 }
 
 sp_layout :: proc(sp: ^Singleplayer, window_size: Vec2) {
 	// left side
 
-	left_side_layout: ui.Vertical_Stack
-	ui.vertical_stack_init(&left_side_layout, Vec2{}, 30, .Start, sp.temp_allocator)
-	ui.vertical_stack_add(&left_side_layout, &sp.score_card)
+	left_side_layout: ui.Block
+	ui.block_init(
+		&left_side_layout,
+		.Vertical,
+		spacing = 30,
+		alignment = .Start,
+		allocator = sp.temp_allocator,
+	)
+	ui.block_add_child(&left_side_layout, &sp.score_block)
 
 	// right side
 
-	right_side_layout: ui.Vertical_Stack
-	ui.vertical_stack_init(&right_side_layout, Vec2{}, 30, .End, sp.temp_allocator)
-	ui.vertical_stack_add(&right_side_layout, &sp.time_text)
-	ui.vertical_stack_add(&right_side_layout, &sp.queue_stack)
+	right_side_layout: ui.Block
+	ui.block_init(
+		&right_side_layout,
+		.Vertical,
+		spacing = 30,
+		alignment = .End,
+		allocator = sp.temp_allocator,
+	)
+	ui.block_add_child(&right_side_layout, &sp.time_text)
+	ui.block_add_child(&right_side_layout, &sp.queue_block)
 
 	// layout
 
-	layout: ui.Horizontal_Stack
-	ui.horizontal_stack_init(&layout, Vec2{}, 30, .Start, sp.temp_allocator)
+	layout: ui.Block
+	ui.block_init(
+		&layout,
+		.Horizontal,
+		spacing = 30,
+		alignment = .Start,
+		allocator = sp.temp_allocator,
+	)
 
-	ui.horizontal_stack_add(&layout, &left_side_layout)
-	ui.horizontal_stack_add(&layout, &sp.board)
-	ui.horizontal_stack_add(&layout, &right_side_layout)
+	ui.block_add_child(&layout, &left_side_layout)
+	ui.block_add_child(&layout, &sp.board)
+	ui.block_add_child(&layout, &right_side_layout)
 
 	ui.center(window_size, &layout.rect)
-	ui.horizontal_stack_layout(&layout)
+	ui.block_layout(&layout)
 
 	// countdown
 	ui.center(sp.board.rect, &sp.countdown_texts[0].rect)
@@ -364,6 +423,11 @@ sp_update :: proc(sp: ^Singleplayer) {
 						for i in len(sp.filled_cells) - sp.cols ..< len(sp.filled_cells) {
 							sp.filled_cells[i] = .None
 						}
+
+						sp.rows_score += 10
+						sp.default_time_multiplier = clamp(sp.default_time_multiplier + 0.1, 1, 4)
+						sp.clock.multiplier = sp.default_time_multiplier
+						fmt.println(sp.clock.multiplier)
 					}
 				}
 			}
@@ -380,7 +444,19 @@ sp_update :: proc(sp: ^Singleplayer) {
 }
 
 sp_draw :: proc(sp: ^Singleplayer) {
-	ui.card_draw(&sp.score_card)
+	{ 	// left side
+		ui.draw_rect(
+			sp.score_block.rect,
+			ui.Modifiers_Flags{.Background, .Border},
+			clr_bg = sp.clr_card_bg,
+			clr_border = sp.clr_card_border,
+		)
+		ui.text_draw(&sp.score_header)
+
+		score := max(0, sp.clock.time - 3 + f64(sp.rows_score))
+		sp.score_text.text = fmt.aprintf("%06.0f", score, allocator = sp.temp_allocator)
+		ui.text_mono_draw(&sp.score_text)
+	}
 
 	{ 	// draw board
 		// horizontal walls
@@ -468,12 +544,19 @@ sp_draw :: proc(sp: ^Singleplayer) {
 	ui.text_mono_draw(&sp.time_text)
 
 	{ 	// queue
+		ui.draw_rect(
+			sp.queue_block.rect,
+			ui.Modifiers_Flags{.Background, .Border},
+			clr_bg = sp.clr_card_bg,
+			clr_border = sp.clr_card_border,
+		)
+
 		ui.text_draw(&sp.queue_header)
 
 		if sp.state == .Game {
 			next := sp.queue.bag[sp.queue.index]
 			for c in tetromino_coords[next][0] {
-				pos := sp.queue_card.rect.xy + coords_vec(c) * CUBE_SIZE
+				pos := sp.queue_tetromino_block.rect.xy + coords_vec(c) * CUBE_SIZE
 				draw_cube(tetromino_cubes[next], pos)
 			}
 		}
@@ -533,7 +616,7 @@ sp_process_event :: proc(sp: ^Singleplayer, event: ^platform.Event) {
 		case .Keyup:
 			#partial switch event.keyboard.key {
 			case .DOWN:
-				sp.clock.multiplier = 1
+				sp.clock.multiplier = sp.default_time_multiplier
 			}
 		}
 	}

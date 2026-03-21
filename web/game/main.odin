@@ -14,6 +14,8 @@ Rect :: linalg.Vector4f32
 Color :: linalg.Vector4f32
 
 CLR_BG :: Color{0.02, 0.02, 0.05, 1}
+CLR_BG_SECONDARY :: Color{0.03, 0.03, 0.10, 1}
+CLR_BORDER :: Color{0.17, 0.18, 0.22, 1}
 CLR_BTN_BG :: Color{0.15, 0.73, 0.3, 1}
 CLR_BTN_TEXT :: CLR_BG
 CLR_TEXT :: Color{0.9, 0.9, 0.9, 1}
@@ -49,24 +51,30 @@ menu_layout :: proc(ui_menu: ^Menu, screen_size: Vec2, allocator := context.temp
 	ui.button_init(&ui_menu.sp_btn, Vec2{200, 40}, "Play singleplayer", clr_fill, clr_btn_text)
 	ui.button_init(&ui_menu.mp_btn, Vec2{200, 40}, "Play multiplayer", clr_fill, clr_btn_text)
 
-	buttons: ui.Vertical_Stack
-	ui.vertical_stack_init(&buttons, Vec2{}, 20, .Center, allocator)
+	buttons: ui.Block
+	ui.block_init(&buttons, .Vertical, spacing = 20, alignment = .Center, allocator = allocator)
 
-	ui.vertical_stack_add(&buttons, &ui_menu.sp_btn)
-	ui.vertical_stack_add(&buttons, &ui_menu.mp_btn)
+	ui.block_add_child(&buttons, &ui_menu.sp_btn)
+	ui.block_add_child(&buttons, &ui_menu.mp_btn)
 
 	// screen
 
 	ui.text_init(&ui_menu.header, "Tetris showdown", CLR_TEXT)
 
-	screen_layout: ui.Vertical_Stack
-	ui.vertical_stack_init(&screen_layout, Vec2{}, 100, .Center, allocator)
+	screen_layout: ui.Block
+	ui.block_init(
+		&screen_layout,
+		.Vertical,
+		spacing = 100,
+		alignment = .Center,
+		allocator = allocator,
+	)
 
-	ui.vertical_stack_add(&screen_layout, &ui_menu.header)
-	ui.vertical_stack_add(&screen_layout, &buttons)
+	ui.block_add_child(&screen_layout, &ui_menu.header)
+	ui.block_add_child(&screen_layout, &buttons)
 
 	ui.center(screen_size, &screen_layout.rect)
-	ui.vertical_stack_layout(&screen_layout)
+	ui.block_layout(&screen_layout)
 }
 
 Context :: struct {
@@ -151,7 +159,13 @@ step :: proc(delta_time: f64) -> bool {
 			case .Menu:
 				if rect_collides(ctx.menu.sp_btn.rect, mouse) {
 					ctx.screen = .Singleplayer
-					game.sp_init(&ctx.singleplayer, ctx.window_size, CLR_TEXT)
+					game.sp_init(
+						&ctx.singleplayer,
+						ctx.window_size,
+						clr_text = CLR_TEXT,
+						clr_card_bg = CLR_BG_SECONDARY,
+						clr_card_border = CLR_BORDER,
+					)
 					game.sp_layout(&ctx.singleplayer, ctx.window_size)
 				}
 			case .Singleplayer:
