@@ -7,10 +7,16 @@ import "core:mem"
 
 import game "game"
 import platform "platform"
+import ui "ui"
 
 Vec2 :: linalg.Vector2f32
 Rect :: linalg.Vector4f32
 Color :: linalg.Vector4f32
+
+CLR_BG :: Color{0.02, 0.02, 0.05, 1}
+CLR_BTN_BG :: Color{0.15, 0.73, 0.3, 1}
+CLR_BTN_TEXT :: CLR_BG
+CLR_TEXT :: Color{0.9, 0.9, 0.9, 1}
 
 rect_collides :: proc(r: Rect, other: Vec2) -> bool {
 	inside_x := r.x <= other.x && r.x + r.z >= other.x
@@ -24,79 +30,50 @@ Mouse :: struct {
 }
 
 Screen :: enum {
-	Begin,
+	Menu,
 	Singleplayer,
 }
 
-Button :: struct {
-	using rect: Rect,
-	text:       string,
-	text_rect:  Rect,
-	bg_color:   Color,
-	text_color: Color,
+Menu :: struct {
+	header: ui.Text,
+	sp_btn: ui.Button,
+	mp_btn: ui.Button,
 }
 
-button_init :: proc(
-	button: ^Button,
-	size: Vec2,
-	text: string,
-	bg_color: Color,
-	text_color: Color,
-) {
-	button.rect.zw = size
+menu_layout :: proc(ui_menu: ^Menu, screen_size: Vec2, allocator := context.temp_allocator) {
+	clr_fill := CLR_BTN_BG
+	clr_btn_text := CLR_BTN_TEXT
 
-	button.bg_color = bg_color
-	button.text_color = text_color
+	// buttons
 
-	button.text = text
-	text_size: Vec2
-	platform.measure_text(&text_size, button.text)
-	button.text_rect.zw = text_size
-	button.text_rect.xy = button.rect.zw / 2 - button.text_rect.zw / 2
-}
+	ui.button_init(&ui_menu.sp_btn, Vec2{200, 40}, "Play singleplayer", clr_fill, clr_btn_text)
+	ui.button_init(&ui_menu.mp_btn, Vec2{200, 40}, "Play multiplayer", clr_fill, clr_btn_text)
 
-button_render :: proc(button: ^Button) {
-	platform.fill_rect(&button.rect, &button.bg_color)
-	text_pos := button.rect.xy + button.text_rect.xy
-	platform.fill_text(&text_pos, &button.text_color, button.text)
-}
+	buttons: ui.Vertical_Stack
+	ui.vertical_stack_init(&buttons, Vec2{}, 20, .Center, allocator)
 
-Fps :: struct {
-	using rect: Rect,
-	text:       string,
-}
+	ui.vertical_stack_add(&buttons, &ui_menu.sp_btn)
+	ui.vertical_stack_add(&buttons, &ui_menu.mp_btn)
 
-UI :: struct {
-	fps:         Fps,
-	play_sp_btn: Button,
-	play_mp_btn: Button,
-}
+	// screen
 
-ui_init :: proc(ctx: ^Context) {
-	ui := &ctx.ui
+	ui.text_init(&ui_menu.header, "Tetris showdown", CLR_TEXT)
 
-	button_init(
-		&ui.play_sp_btn,
-		Vec2{200, 40},
-		"Play singleplayer",
-		Color{0.4, 0.4, 0.4, 1},
-		Color{1, 1, 1, 1},
-	)
+	screen_layout: ui.Vertical_Stack
+	ui.vertical_stack_init(&screen_layout, Vec2{}, 100, .Center, allocator)
 
-	button_init(
-		&ui.play_mp_btn,
-		Vec2{200, 40},
-		"Play multiplayer",
-		Color{0.4, 0.4, 0.4, 1},
-		Color{1, 1, 1, 1},
-	)
+	ui.vertical_stack_add(&screen_layout, &ui_menu.header)
+	ui.vertical_stack_add(&screen_layout, &buttons)
+
+	ui.center(screen_size, &screen_layout.rect)
+	ui.vertical_stack_layout(&screen_layout)
 }
 
 Context :: struct {
 	window_size:  Vec2,
 	screen:       Screen,
 	mouse:        Mouse,
-	ui:           UI,
+	menu:         Menu,
 	singleplayer: game.Singleplayer,
 }
 
@@ -119,53 +96,7 @@ init :: proc() {
 	platform.set_target_fps(144)
 	platform.window_size(&ctx.window_size)
 
-	ui_init(&ctx)
-
-	layout(&ctx)
-}
-
-layout :: proc(ctx: ^Context) {
-	ui := &ctx.ui
-
-	switch ctx.screen {
-	case .Begin:
-		// play button
-		ui.play_sp_btn.rect.xy = ctx.window_size / 2 - ui.play_sp_btn.rect.zw / 2
-		ui.play_sp_btn.rect.y -= 30
-
-		ui.play_mp_btn.rect.xy = ctx.window_size / 2 - ui.play_sp_btn.rect.zw / 2
-		ui.play_mp_btn.rect.y += 30
-	case .Singleplayer:
-		game.singleplayer_layout(&ctx.singleplayer, ctx.window_size)
-	}
-
-	{ 	// fps
-		fps := &ui.fps
-
-		text_size: Vec2
-		platform.measure_text(&text_size, fps.text)
-
-		fps.rect.zw = text_size
-		fps.rect.x = ctx.window_size.x - text_size.x - 20
-		fps.rect.y = 20
-	}
-}
-
-draw :: proc(ctx: ^Context) {
-	ui := &ctx.ui
-
-	switch ctx.screen {
-	case .Begin:
-		button_render(&ui.play_sp_btn)
-		button_render(&ui.play_mp_btn)
-	case .Singleplayer:
-		game.singleplayer_draw(&ctx.singleplayer)
-	}
-
-	{ 	// fps
-		pos := ui.fps.rect.xy
-		platform.fill_text(&pos, &Color{1, 0.9, 0.2, 1}, ui.fps.text)
-	}
+	menu_layout(&ctx.menu, ctx.window_size)
 }
 
 @(export)
@@ -180,14 +111,6 @@ step :: proc(delta_time: f64) -> bool {
 		game.clock_frame_start(&ctx.singleplayer.clock, delta_time)
 	}
 
-	ui := &ctx.ui
-
-	{
-		fps: f32
-		platform.get_actual_fps(&fps)
-		ui.fps.text = fmt.tprintf("%.0f", fps)
-	}
-
 	{
 		event: platform.Event
 		for {
@@ -198,7 +121,7 @@ step :: proc(delta_time: f64) -> bool {
 
 			#partial switch ctx.screen {
 			case .Singleplayer:
-				game.singleplayer_process_event(&ctx.singleplayer, &event)
+				game.sp_process_event(&ctx.singleplayer, &event)
 			}
 
 			// global
@@ -206,7 +129,8 @@ step :: proc(delta_time: f64) -> bool {
 			#partial switch event.kind {
 			case .Resize:
 				ctx.window_size = event.resize.size
-				layout(&ctx)
+				menu_layout(&ctx.menu, ctx.window_size)
+				game.sp_layout(&ctx.singleplayer, ctx.window_size)
 			}
 		}
 	}
@@ -224,10 +148,11 @@ step :: proc(delta_time: f64) -> bool {
 			// click
 
 			switch ctx.screen {
-			case .Begin:
-				if rect_collides(ui.play_sp_btn, mouse) {
+			case .Menu:
+				if rect_collides(ctx.menu.sp_btn.rect, mouse) {
 					ctx.screen = .Singleplayer
-					game.singleplayer_init(&ctx.singleplayer, ctx.window_size)
+					game.sp_init(&ctx.singleplayer, ctx.window_size, CLR_TEXT)
+					game.sp_layout(&ctx.singleplayer, ctx.window_size)
 				}
 			case .Singleplayer:
 			}
@@ -236,14 +161,34 @@ step :: proc(delta_time: f64) -> bool {
 
 	{ 	// update
 		switch ctx.screen {
-		case .Begin:
+		case .Menu:
 		case .Singleplayer:
-			game.singleplayer_update(&ctx.singleplayer)
+			game.sp_update(&ctx.singleplayer)
 		}
 
 	}
 
-	draw(&ctx)
+	{ 	// draw
+		clr_bg := CLR_BG
+		platform.fill_rect(&Rect{0, 0, ctx.window_size.x, ctx.window_size.y}, &clr_bg)
+
+		switch ctx.screen {
+		case .Menu:
+			ui.text_draw(&ctx.menu.header)
+			ui.button_draw(&ctx.menu.sp_btn)
+			ui.button_draw(&ctx.menu.mp_btn)
+		case .Singleplayer:
+			game.sp_draw(&ctx.singleplayer)
+		}
+
+		{ 	// fps
+			fps: f32
+			platform.get_actual_fps(&fps)
+			text := fmt.tprintf("%.0f", fps)
+			pos := Vec2{ctx.window_size.x - 50, 20}
+			platform.fill_text(&pos, &Color{1, 0.9, 0.2, 1}, text)
+		}
+	}
 
 	return true
 }

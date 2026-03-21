@@ -1,9 +1,11 @@
 package game
 
+import "base:runtime"
 import "core:fmt"
 import "core:math/rand"
 
 import platform "../platform"
+import ui "../ui"
 
 Clock :: struct {
 	time:       f64,
@@ -162,80 +164,120 @@ sp_queue_next :: proc(queue: ^SP_Queue) -> TetrominoKind {
 }
 
 Singleplayer :: struct {
+	perm_allocator:  runtime.Allocator,
+	temp_allocator:  runtime.Allocator,
+
 	// ui
-	using rect:   Rect,
-	game_rect:    Rect,
-	time_rect:    Rect,
-	queue_rect:   Rect,
+	countdown_texts: [3]ui.Text,
+	board:           ui.Card,
+	score_card:      ui.Card,
+	time_text:       ui.Text_Mono,
+	queue_stack:     ui.Vertical_Stack,
+	queue_header:    ui.Text,
+	queue_card:      ui.Card,
 
 	//
-	clock:        Clock,
-	last_update:  f64,
-	timestep:     f64,
-	state:        SingleplayerState,
-	countdown:    int,
+	clock:           Clock,
+	last_update:     f64,
+	timestep:        f64,
+	state:           SingleplayerState,
+	countdown:       int,
 
 	// game
-	cols, rows:   int,
-	queue:        SP_Queue,
-	tetromino:    Tetromino,
-	filled_cells: [dynamic]Cube,
+	cols, rows:      int,
+	queue:           SP_Queue,
+	tetromino:       Tetromino,
+	filled_cells:    [dynamic]Cube,
 }
 
-singleplayer_init :: proc(sp: ^Singleplayer, window_size: Vec2, allocator := context.allocator) {
-	// sizes
+sp_init :: proc(
+	sp: ^Singleplayer,
+	window_size: Vec2,
+	clr_text: Color,
+	perm_allocator := context.allocator,
+	temp_allocator := context.temp_allocator,
+) {
+	sp.perm_allocator = perm_allocator
+	sp.temp_allocator = temp_allocator
 
 	sp.cols = 10
 	sp.rows = 20
-	sp.filled_cells = make([dynamic]Cube, sp.cols * sp.rows, allocator = allocator)
-
-	// full rect
-
-	sp.rect.z = f32((sp.cols + 2) * CUBE_SIZE) * 4
-	sp.rect.w = f32((sp.rows + 2) * CUBE_SIZE) * 1.5
-
-	// game
-
-	sp.game_rect.z = f32(sp.cols + 2) * CUBE_SIZE
-	sp.game_rect.w = f32(sp.rows + 2) * CUBE_SIZE
+	sp.filled_cells = make([dynamic]Cube, sp.cols * sp.rows, perm_allocator)
 
 	sp.state = .Countdown
+
+	sp_queue_init(&sp.queue)
+	tetromino_init(&sp.tetromino, sp_queue_next(&sp.queue), sp)
+
+	// left side
+	ui.card_init(&sp.score_card, Rect{0, 0, 100, 100}, Color{0, 1, 0, 1})
+
+	// board
+
+	board_width := f32(sp.cols + 2) * CUBE_SIZE
+	board_height := f32(sp.rows + 2) * CUBE_SIZE
+	ui.card_init(&sp.board, Rect{0, 0, board_width, board_height}, Color{1, 0, 0, 1})
+
+	//
+	// right side
+
+	// countdown
+
 	sp.countdown = 3
+
+	ui.text_init(&sp.countdown_texts[0], "1", clr_text)
+	ui.text_init(&sp.countdown_texts[1], "2", clr_text)
+	ui.text_init(&sp.countdown_texts[2], "3", clr_text)
 
 	// time
 
 	sp.timestep = 1
 	clock_init(&sp.clock)
 
-	time_text_size: Vec2
-	platform.measure_text(&time_text_size, "999:99:99.99")
-	sp.time_rect.zw = time_text_size
+	ui.text_mono_init(&sp.time_text, "00:00:00.00", clr_text)
 
-	// queue
+	{ 	// queue
+		ui.vertical_stack_init(&sp.queue_stack, Vec2{}, 10, .Start, perm_allocator)
 
-	sp.queue_rect.zw = 4 * CUBE_SIZE
+		ui.text_init(&sp.queue_header, "Next", clr_text)
+		ui.vertical_stack_add(&sp.queue_stack, &sp.queue_header)
 
-	singleplayer_layout(sp, window_size)
-
-	// tetromino and queue
-
-	sp_queue_init(&sp.queue)
-	tetromino_init(&sp.tetromino, sp_queue_next(&sp.queue), sp)
+		size :: 4 * CUBE_SIZE
+		ui.card_init(&sp.queue_card, Rect{0, 0, size, size}, Color{1, 0, 0, 1})
+		ui.vertical_stack_add(&sp.queue_stack, &sp.queue_card)
+	}
 }
 
-singleplayer_layout :: proc(sp: ^Singleplayer, window_size: Vec2) {
-	sp.rect.xy = window_size / 2 - sp.rect.zw / 2
-	sp.game_rect.xy = sp.rect.xy + sp.rect.zw / 2 - sp.game_rect.zw / 2
+sp_layout :: proc(sp: ^Singleplayer, window_size: Vec2) {
+	// left side
 
-	game_end := sp.game_rect.x + sp.game_rect.z
-	padding :: 40
+	left_side_layout: ui.Vertical_Stack
+	ui.vertical_stack_init(&left_side_layout, Vec2{}, 30, .Start, sp.temp_allocator)
+	ui.vertical_stack_add(&left_side_layout, &sp.score_card)
 
-	sp.time_rect.x = game_end + padding
-	sp.time_rect.y = sp.game_rect.y
+	// right side
 
-	// align to the end of time rect
-	sp.queue_rect.x = sp.time_rect.x + sp.time_rect.z - sp.queue_rect.z
-	sp.queue_rect.y = sp.time_rect.y + padding
+	right_side_layout: ui.Vertical_Stack
+	ui.vertical_stack_init(&right_side_layout, Vec2{}, 30, .End, sp.temp_allocator)
+	ui.vertical_stack_add(&right_side_layout, &sp.time_text)
+	ui.vertical_stack_add(&right_side_layout, &sp.queue_stack)
+
+	// layout
+
+	layout: ui.Horizontal_Stack
+	ui.horizontal_stack_init(&layout, Vec2{}, 30, .Start, sp.temp_allocator)
+
+	ui.horizontal_stack_add(&layout, &left_side_layout)
+	ui.horizontal_stack_add(&layout, &sp.board)
+	ui.horizontal_stack_add(&layout, &right_side_layout)
+
+	ui.center(window_size, &layout.rect)
+	ui.horizontal_stack_layout(&layout)
+
+	// countdown
+	ui.center(sp.board.rect, &sp.countdown_texts[0].rect)
+	ui.center(sp.board.rect, &sp.countdown_texts[1].rect)
+	ui.center(sp.board.rect, &sp.countdown_texts[2].rect)
 }
 
 is_cell_filled :: proc(coords: Coords, sp: ^Singleplayer) -> (filled: bool) {
@@ -244,7 +286,7 @@ is_cell_filled :: proc(coords: Coords, sp: ^Singleplayer) -> (filled: bool) {
 	return
 }
 
-singleplayer_update :: proc(sp: ^Singleplayer) {
+sp_update :: proc(sp: ^Singleplayer) {
 	updated := false
 
 	switch sp.state {
@@ -337,124 +379,108 @@ singleplayer_update :: proc(sp: ^Singleplayer) {
 	}
 }
 
-singleplayer_draw :: proc(sp: ^Singleplayer) {
-	// bg
-	platform.fill_rect(&sp.rect, &Color{0.15, 0.15, 0.3, 1})
+sp_draw :: proc(sp: ^Singleplayer) {
+	ui.card_draw(&sp.score_card)
 
-	switch sp.state {
-	case .None:
-	case .Countdown:
-		countdown_text := fmt.tprintf("%d", sp.countdown)
-		countdown_text_size: Vec2
-		platform.measure_text(&countdown_text_size, countdown_text)
-
-		pos := sp.rect.xy + sp.rect.zw / 2 - countdown_text_size.xy / 2
-		platform.fill_text(&pos, &Color{1, 1, 1, 1}, countdown_text)
-	case .Game:
-		// padding horizontal
-		for i in 0 ..< 2 + sp.cols {
-			p := sp.game_rect.xy
-			p.x += f32(i * CUBE_SIZE)
-
-			// upper
+	{ 	// draw board
+		// horizontal walls
+		for i in 0 ..< sp.cols + 2 {
+			p := sp.board.rect.xy
+			p.x += f32(i) * CUBE_SIZE
 			draw_cube(.Gray, p)
 
-			// lower
 			p.y += f32(sp.rows + 1) * CUBE_SIZE
 			draw_cube(.Gray, p)
 		}
 
-		// padding vertical
-		for i in 0 ..< sp.rows {
-			p := sp.game_rect.xy
-			p.y += CUBE_SIZE + f32(i) * CUBE_SIZE
+		{ 	// vertical walls
+			p := sp.board.rect.xy
+			p.y += CUBE_SIZE
+			for _ in 0 ..< sp.rows {
+				draw_cube(.Gray, p)
+				draw_cube(.Gray, Vec2{p.x + f32(sp.cols + 1) * CUBE_SIZE, p.y})
 
-			// left
-			draw_cube(.Gray, p)
-
-			p.x += f32(sp.cols + 1) * CUBE_SIZE
-			draw_cube(.Gray, p)
+				p.y += CUBE_SIZE
+			}
 		}
 
-		// NOTE: Y coordinate in game is rising while going up
-		{ 	// tetromino and projection
-			t := sp.tetromino
+		game_coords_to_world_pos :: proc(c: Coords, sp: ^Singleplayer) -> (p: Vec2) {
+			p = sp.board.rect.xy
+			p.x += f32(c.col + 1) * CUBE_SIZE
+			p.y += f32(sp.rows - c.row) * CUBE_SIZE
+			return
+		}
 
-			if t.kind != .None {
-				// NOTE: when drawing origin is in the top left, so we can not
-				// add CUBE_SIZE to y
-				start_pos := sp.game_rect.xy + CUBE_SIZE
-				start_pos.y += CUBE_SIZE * f32(sp.rows - 1)
-
+		if sp.state == .Game {
+			if sp.tetromino.kind != .None {
 				// tetromino
+				t := &sp.tetromino
 				for c in tetromino_abs_coords(t.coords, t.pos) {
-					offset := coords_vec(c) * CUBE_SIZE
-					p := start_pos
-					p.x += offset.x
-					p.y -= offset.y
+					p := game_coords_to_world_pos(c, sp)
 					draw_cube(tetromino_cubes[t.kind], p)
 				}
 
 				// projection
+				clr_projection := Color{0.6, 0.6, 0.6, 1}
 				for c in tetromino_abs_coords(t.coords, t.projection_pos) {
-					offset := coords_vec(c) * CUBE_SIZE
-					p := start_pos
-					p.x += offset.x
-					p.y -= offset.y
-					platform.draw_rect(
-						&Rect{p.x, p.y, CUBE_SIZE, CUBE_SIZE},
-						&Color{0.6, 0.6, 0.6, 1},
-					)
+					p := game_coords_to_world_pos(c, sp)
+					platform.draw_rect(&Rect{p.x, p.y, CUBE_SIZE, CUBE_SIZE}, &clr_projection)
 				}
+
+
 			}
-		}
 
-		{ 	// filled cells
-			start_pos := sp.game_rect.xy
-			start_pos.x += CUBE_SIZE
-			start_pos.y += CUBE_SIZE * f32(sp.rows)
-
-			for fc, i in sp.filled_cells do if fc != .None {
+			// filled cells
+			for cell, i in sp.filled_cells do if cell != .None {
 				col := i % sp.cols
 				row := i / sp.cols
-
-				x := start_pos.x + f32(col) * CUBE_SIZE
-				y := start_pos.y - f32(row) * CUBE_SIZE
-				draw_cube(fc, Vec2{x, y})
+				pos := game_coords_to_world_pos(Coords{col, row}, sp)
+				draw_cube(cell, pos)
 			}
 		}
 
-		{ 	// time
-			total := int(sp.clock.time) - 3
-
-			hours := total / 3600
-			minutes := (total / 60) % 60
-			seconds := (sp.clock.time - 3) - f64(total) + f64(total % 60)
-
-			text := fmt.tprintf("%02d:%02d:%05.2f", hours, minutes, seconds)
-
-			text_size: Vec2
-			platform.measure_text(&text_size, text)
-
-			pos := sp.time_rect.xy + sp.time_rect.zw - text_size
-			platform.fill_text(&pos, &Color{0.8, 0.8, 0.8, 1}, text)
+		if sp.state == .Countdown {
+			text := &sp.countdown_texts[sp.countdown - 1]
+			ui.text_draw(text)
 		}
+	}
 
-		{ 	// queue
-			platform.draw_rect(&sp.queue_rect, &Color{0.8, 0.8, 0.8, 1})
+	// right side
 
+	#partial switch sp.state {
+	case .Countdown:
+		sp.time_text.text = "00:00:00.00"
+	case .Game:
+		total := int(sp.clock.time) - 3
+		hours := total / 3600
+		minutes := (total / 60) % 60
+		seconds := (sp.clock.time - 3) - f64(total) + f64(total % 60)
+		text := fmt.aprintf(
+			"%02d:%02d:%05.2f",
+			hours,
+			minutes,
+			seconds,
+			allocator = sp.temp_allocator,
+		)
+		sp.time_text.text = text
+	}
+
+	ui.text_mono_draw(&sp.time_text)
+
+	{ 	// queue
+		ui.text_draw(&sp.queue_header)
+
+		if sp.state == .Game {
 			next := sp.queue.bag[sp.queue.index]
-			coords := tetromino_coords[next][0]
-
-			for c in coords {
-				dst := coords_vec(c) * CUBE_SIZE + sp.queue_rect.xy
-				draw_cube(tetromino_cubes[next], dst)
+			for c in tetromino_coords[next][0] {
+				pos := sp.queue_card.rect.xy + coords_vec(c) * CUBE_SIZE
+				draw_cube(tetromino_cubes[next], pos)
 			}
 		}
 	}
 }
 
-singleplayer_process_event :: proc(sp: ^Singleplayer, event: ^platform.Event) {
+sp_process_event :: proc(sp: ^Singleplayer, event: ^platform.Event) {
 	if sp.state == .Game {
 		#partial switch event.kind {
 		case .Keydown:

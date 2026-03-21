@@ -154,8 +154,39 @@ async function main() {
 
     // load font
 
-    const font = "20px editundo"
-    await document.fonts.load(font)
+    /**
+    * @typedef {{width: number; height: number;} FontMetrics
+    *
+    * @param {number} size
+    * @returns {Promise<{ name: string, char: FontMetrics, charMap: FontMetrics[] }>}
+    */
+    async function loadFont(size) {
+        const font = `${size}px editundo`
+        await document.fonts.load(font)
+
+        let maxWidth = 0
+        let maxHeight = 0
+
+        /** @type {FontMetrics[]} */
+        const chars = []
+
+        for (let c = 32; c < 127; c += 1) {
+            canvasCtx.font = font
+            canvasCtx.textBaseline = "top"
+            canvasCtx.textAlign = "left"
+            const text = String.fromCharCode(c)
+            const tm = canvasCtx.measureText(text)
+
+            maxWidth = Math.max(maxWidth, tm.width)
+            maxHeight = Math.max(maxHeight, tm.fontBoundingBoxDescent)
+
+            chars[c] = { width: tm.width, height: tm.height }
+        }
+
+        return { name: font, char: { width: maxWidth, height: maxHeight }, charMap: chars }
+    }
+
+    const font = await loadFont(20)
 
     // load wasm 
 
@@ -242,7 +273,7 @@ async function main() {
                 const size = new Float32Array(memory, size_ptr, 2)
 
                 const text = readString(memory, text_ptr, text_len)
-                canvasCtx.font = font
+                canvasCtx.font = font.name
                 canvasCtx.textBaseline = "top"
                 canvasCtx.textAlign = "left"
                 const m = canvasCtx.measureText(text)
@@ -250,11 +281,16 @@ async function main() {
                 size[0] = m.width
                 size[1] = m.fontBoundingBoxDescent
             },
+            font_metrics_max(size_ptr) {
+                const size = new Float32Array(memory, size_ptr, 2)
+                size[0] = font.char.width
+                size[1] = font.char.height
+            },
             fill_text(pos_ptr, color_ptr, text_ptr, text_len) {
                 const pos = readVec2(memory, pos_ptr)
                 const text = readString(memory, text_ptr, text_len)
 
-                canvasCtx.font = font
+                canvasCtx.font = font.name
                 canvasCtx.textBaseline = "top"
                 canvasCtx.textAlign = "left"
                 canvasCtx.fillStyle = readColor(memory, color_ptr)

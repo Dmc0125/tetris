@@ -11,6 +11,7 @@ fill_rect :: proc(rect: ^Rect, color: ^Color) {}
 
 // font
 measure_text :: proc(size: ^Vec2, text: string) {}
+font_metrics_max :: proc(size: ^Vec2) {}
 fill_text :: proc(pos: ^Vec2, color: ^Color, text: string) {}
 
 // events
