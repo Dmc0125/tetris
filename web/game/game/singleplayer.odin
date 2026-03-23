@@ -135,9 +135,10 @@ tetromino_abs_coords :: proc(coords: [4]Coords, pos: Coords) -> (abs_coords: [4]
 }
 
 SingleplayerState :: enum {
-	None,
 	Countdown,
 	Game,
+	Paused,
+	GameOver,
 }
 
 SP_Queue :: struct {
@@ -164,49 +165,59 @@ sp_queue_next :: proc(queue: ^SP_Queue) -> TetrominoKind {
 }
 
 Singleplayer :: struct {
-	perm_allocator:          runtime.Allocator,
-	temp_allocator:          runtime.Allocator,
+	perm_allocator:                  runtime.Allocator,
+	temp_allocator:                  runtime.Allocator,
 
 	// ui
-	countdown_texts:         [3]ui.Text,
+	countdown_texts:                 [3]ui.Text,
 	// left side
-	score_block:             ui.Block,
-	score_header:            ui.Text,
-	score_text:              ui.Text_Mono,
+	score_block:                     ui.Block,
+	score_header:                    ui.Text,
+	score_text:                      ui.Text_Mono,
 	// board
-	board:                   ui.Block,
+	board:                           ui.Block,
 	// right side
-	time_text:               ui.Text_Mono,
-	queue_block:             ui.Block,
-	queue_header:            ui.Text,
-	queue_tetromino_block:   ui.Block,
+	time_text:                       ui.Text_Mono,
+	queue_block:                     ui.Block,
+	queue_header:                    ui.Text,
+	queue_tetromino_block_container: ui.Block,
+	queue_tetromino_block:           ui.Block,
+	pause_button:                    ui.Button,
+	// game over
+	game_over_text:                  ui.Text,
 
 	// ui clrs
-	clr_card_bg:             Color,
-	clr_card_border:         Color,
+	clr_card_bg:                     Color,
+	clr_card_border:                 Color,
+	clr_text_light:                  Color,
+	clr_text_dark:                   Color,
+	clr_accent:                      Color,
 
 	//
-	clock:                   Clock,
-	last_update:             f64,
-	timestep:                f64,
-	state:                   SingleplayerState,
-	countdown:               int,
+	clock:                           Clock,
+	last_update:                     f64,
+	timestep:                        f64,
+	state:                           SingleplayerState,
+	countdown:                       int,
 
 	// game
-	cols, rows:              int,
-	queue:                   SP_Queue,
-	tetromino:               Tetromino,
-	filled_cells:            [dynamic]Cube,
-	rows_score:              f32,
-	default_time_multiplier: f64,
+	cols, rows:                      int,
+	queue:                           SP_Queue,
+	tetromino:                       Tetromino,
+	filled_cells:                    [dynamic]Cube,
+	rows_score:                      f64,
+	score:                           f64,
+	default_time_multiplier:         f64,
 }
 
 sp_init :: proc(
 	sp: ^Singleplayer,
 	window_size: Vec2,
-	clr_text: Color,
 	clr_card_bg: Color,
 	clr_card_border: Color,
+	clr_text_light: Color,
+	clr_text_dark: Color,
+	clr_accent: Color,
 	perm_allocator := context.allocator,
 	temp_allocator := context.temp_allocator,
 ) {
@@ -224,14 +235,17 @@ sp_init :: proc(
 
 	sp.clr_card_bg = clr_card_bg
 	sp.clr_card_border = clr_card_border
+	sp.clr_text_light = clr_text_light
+	sp.clr_text_dark = clr_text_dark
+	sp.clr_accent = clr_accent
 
 	// countdown
 
 	sp.countdown = 3
 
-	ui.text_init(&sp.countdown_texts[0], "1", clr_text)
-	ui.text_init(&sp.countdown_texts[1], "2", clr_text)
-	ui.text_init(&sp.countdown_texts[2], "3", clr_text)
+	ui.text_init(&sp.countdown_texts[0], "1")
+	ui.text_init(&sp.countdown_texts[1], "2")
+	ui.text_init(&sp.countdown_texts[2], "3")
 
 	// left side
 
@@ -245,10 +259,10 @@ sp_init :: proc(
 		allocator = perm_allocator,
 	)
 
-	ui.text_init(&sp.score_header, "Score", clr_text)
+	ui.text_init(&sp.score_header, "Score")
 	ui.block_add_child(&sp.score_block, &sp.score_header)
 
-	ui.text_mono_init(&sp.score_text, "000000", clr_text)
+	ui.text_mono_init(&sp.score_text, "000000")
 	ui.block_add_child(&sp.score_block, &sp.score_text)
 
 	// board
@@ -266,7 +280,7 @@ sp_init :: proc(
 	sp.default_time_multiplier = 1
 	clock_init(&sp.clock)
 
-	ui.text_mono_init(&sp.time_text, "00:00:00.00", clr_text)
+	ui.text_mono_init(&sp.time_text, "00:00:00.00")
 
 	{ 	// queue
 		size :: 4 * CUBE_SIZE
@@ -281,12 +295,44 @@ sp_init :: proc(
 			allocator = perm_allocator,
 		)
 
-		ui.text_init(&sp.queue_header, "Next", clr_text)
+		ui.text_init(&sp.queue_header, "Next")
 		ui.block_add_child(&sp.queue_block, &sp.queue_header)
 
+		ui.block_init(
+			&sp.queue_tetromino_block_container,
+			.Vertical,
+			Rect{0, 0, sp.time_text.rect.z - 40, size},
+			alignment = .Center,
+		)
+
 		ui.block_init(&sp.queue_tetromino_block, .Vertical, Rect{0, 0, size, size})
-		ui.block_add_child(&sp.queue_block, &sp.queue_tetromino_block)
+		ui.block_add_child(&sp.queue_tetromino_block_container, &sp.queue_tetromino_block)
+
+		ui.block_add_child(&sp.queue_block, &sp.queue_tetromino_block_container)
 	}
+
+	ui.button_init(&sp.pause_button, Vec2{sp.time_text.rect.z, 40}, "Pause")
+	ui.text_init(&sp.game_over_text, "Game over")
+}
+
+sp_reset :: proc(sp: ^Singleplayer, window_size: Vec2) {
+	for _, i in sp.filled_cells {
+		sp.filled_cells[i] = .None
+	}
+
+	sp.state = .Countdown
+	sp.countdown = 3
+
+	sp_queue_init(&sp.queue)
+	tetromino_init(&sp.tetromino, sp_queue_next(&sp.queue), sp)
+
+	sp.timestep = 1
+	sp.default_time_multiplier = 1
+	clock_init(&sp.clock)
+	sp.last_update = 0
+
+	sp.rows_score = 0
+	sp.score = 0
 }
 
 sp_layout :: proc(sp: ^Singleplayer, window_size: Vec2) {
@@ -315,6 +361,9 @@ sp_layout :: proc(sp: ^Singleplayer, window_size: Vec2) {
 	ui.block_add_child(&right_side_layout, &sp.time_text)
 	ui.block_add_child(&right_side_layout, &sp.queue_block)
 
+
+	ui.block_add_child(&right_side_layout, &sp.pause_button)
+
 	// layout
 
 	layout: ui.Block
@@ -337,6 +386,8 @@ sp_layout :: proc(sp: ^Singleplayer, window_size: Vec2) {
 	ui.center(sp.board.rect, &sp.countdown_texts[0].rect)
 	ui.center(sp.board.rect, &sp.countdown_texts[1].rect)
 	ui.center(sp.board.rect, &sp.countdown_texts[2].rect)
+
+	ui.center(sp.board.rect, &sp.game_over_text.rect)
 }
 
 is_cell_filled :: proc(coords: Coords, sp: ^Singleplayer) -> (filled: bool) {
@@ -348,8 +399,7 @@ is_cell_filled :: proc(coords: Coords, sp: ^Singleplayer) -> (filled: bool) {
 sp_update :: proc(sp: ^Singleplayer) {
 	updated := false
 
-	switch sp.state {
-	case .None:
+	#partial switch sp.state {
 	case .Countdown:
 		// update every second
 		if sp.last_update + sp.timestep < sp.clock.time {
@@ -370,8 +420,17 @@ sp_update :: proc(sp: ^Singleplayer) {
 
 			// spawn tetromino
 			if sp.tetromino.kind == .None {
+				t := &sp.tetromino
+
 				next_kind := sp_queue_next(&sp.queue)
-				tetromino_init(&sp.tetromino, next_kind, sp)
+				tetromino_init(t, next_kind, sp)
+
+				for c in tetromino_abs_coords(t.coords, t.pos) do if is_cell_filled(c, sp) {
+					t.kind = .None
+					sp.state = .GameOver
+					break
+				}
+
 				return
 			}
 
@@ -432,10 +491,16 @@ sp_update :: proc(sp: ^Singleplayer) {
 				}
 			}
 
+
+			sp.score = max(0, sp.rows_score + sp.clock.time - 3)
 			return
 		}
 
 		updated = update_game(sp)
+	case .GameOver:
+		pause_button_pos := sp.pause_button.rect.xy
+		ui.button_init(&sp.pause_button, sp.pause_button.rect.zw, "Play again")
+		sp.pause_button.rect.xy = pause_button_pos
 	}
 
 	if updated {
@@ -451,11 +516,10 @@ sp_draw :: proc(sp: ^Singleplayer) {
 			clr_bg = sp.clr_card_bg,
 			clr_border = sp.clr_card_border,
 		)
-		ui.text_draw(&sp.score_header)
+		ui.text_draw(&sp.score_header, clr_bg = sp.clr_text_light)
 
-		score := max(0, sp.clock.time - 3 + f64(sp.rows_score))
-		sp.score_text.text = fmt.aprintf("%06.0f", score, allocator = sp.temp_allocator)
-		ui.text_mono_draw(&sp.score_text)
+		sp.score_text.text = fmt.aprintf("%06.0f", sp.score, allocator = sp.temp_allocator)
+		ui.text_mono_draw(&sp.score_text, clr_bg = sp.clr_accent)
 	}
 
 	{ 	// draw board
@@ -487,7 +551,7 @@ sp_draw :: proc(sp: ^Singleplayer) {
 			return
 		}
 
-		if sp.state == .Game {
+		if sp.state != .Countdown {
 			if sp.tetromino.kind != .None {
 				// tetromino
 				t := &sp.tetromino
@@ -502,22 +566,26 @@ sp_draw :: proc(sp: ^Singleplayer) {
 					p := game_coords_to_world_pos(c, sp)
 					platform.draw_rect(&Rect{p.x, p.y, CUBE_SIZE, CUBE_SIZE}, &clr_projection)
 				}
-
-
 			}
+		}
 
-			// filled cells
-			for cell, i in sp.filled_cells do if cell != .None {
-				col := i % sp.cols
-				row := i / sp.cols
-				pos := game_coords_to_world_pos(Coords{col, row}, sp)
-				draw_cube(cell, pos)
-			}
+		// filled cells
+		for cell, i in sp.filled_cells do if cell != .None {
+			col := i % sp.cols
+			row := i / sp.cols
+			pos := game_coords_to_world_pos(Coords{col, row}, sp)
+			draw_cube(cell, pos)
 		}
 
 		if sp.state == .Countdown {
 			text := &sp.countdown_texts[sp.countdown - 1]
-			ui.text_draw(text)
+			ui.draw_text(
+				text.rect.xy,
+				text.text,
+				ui.Modifiers_Flags{.Border, .Background},
+				clr_bg = sp.clr_text_light,
+				clr_border = sp.clr_card_bg,
+			)
 		}
 	}
 
@@ -541,7 +609,7 @@ sp_draw :: proc(sp: ^Singleplayer) {
 		sp.time_text.text = text
 	}
 
-	ui.text_mono_draw(&sp.time_text)
+	ui.text_mono_draw(&sp.time_text, clr_bg = sp.clr_text_light)
 
 	{ 	// queue
 		ui.draw_rect(
@@ -551,9 +619,9 @@ sp_draw :: proc(sp: ^Singleplayer) {
 			clr_border = sp.clr_card_border,
 		)
 
-		ui.text_draw(&sp.queue_header)
+		ui.text_draw(&sp.queue_header, clr_bg = sp.clr_text_light)
 
-		if sp.state == .Game {
+		if sp.state != .Countdown {
 			next := sp.queue.bag[sp.queue.index]
 			for c in tetromino_coords[next][0] {
 				pos := sp.queue_tetromino_block.rect.xy + coords_vec(c) * CUBE_SIZE
@@ -561,7 +629,45 @@ sp_draw :: proc(sp: ^Singleplayer) {
 			}
 		}
 	}
+
+	{ 	// pause button
+		clr_bg, clr_text: Color
+		#partial switch sp.state {
+		case .Paused, .GameOver:
+			clr_bg = sp.clr_accent
+			clr_text = sp.clr_text_dark
+		case:
+			clr_bg = sp.clr_card_border
+			clr_text = sp.clr_text_light
+
+		}
+
+		ui.button_draw(&sp.pause_button, clr_btn_bg = clr_bg, clr_text_bg = clr_text)
+	}
+
+	if sp.state == .GameOver {
+		ui.draw_text(
+			sp.game_over_text.rect.xy,
+			sp.game_over_text.text,
+			ui.Modifiers_Flags{.Border, .Background},
+			clr_bg = sp.clr_text_light,
+			clr_border = sp.clr_card_bg,
+		)
+	}
+
+	// ui.draw_rect(
+	// 	sp.queue_tetromino_block_container.rect,
+	// 	ui.Modifiers_Flags{.Border},
+	// 	clr_border = Color{1, 0, 0, 1},
+	// )
+	//
+	// ui.draw_rect(
+	// 	sp.queue_tetromino_block.rect,
+	// 	ui.Modifiers_Flags{.Border},
+	// 	clr_border = Color{1, 0, 0, 1},
+	// )
 }
+
 
 sp_process_event :: proc(sp: ^Singleplayer, event: ^platform.Event) {
 	if sp.state == .Game {
@@ -618,6 +724,28 @@ sp_process_event :: proc(sp: ^Singleplayer, event: ^platform.Event) {
 			case .DOWN:
 				sp.clock.multiplier = sp.default_time_multiplier
 			}
+		case .Resize:
+			sp_layout(sp, event.resize.size)
 		}
+	}
+}
+
+sp_pause_button_click :: proc(sp: ^Singleplayer, window_size: Vec2) {
+	update_pause_btn_text :: proc(sp: ^Singleplayer, text: string) {
+		pause_button_pos := sp.pause_button.rect.xy
+		ui.button_init(&sp.pause_button, sp.pause_button.rect.zw, text)
+		sp.pause_button.rect.xy = pause_button_pos
+	}
+
+	#partial switch sp.state {
+	case .Game:
+		update_pause_btn_text(sp, "resume")
+		sp.state = .Paused
+	case .Paused:
+		update_pause_btn_text(sp, "pause")
+		sp.state = .Game
+	case .GameOver:
+		update_pause_btn_text(sp, "pause")
+		sp_reset(sp, window_size)
 	}
 }

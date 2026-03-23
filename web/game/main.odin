@@ -13,12 +13,11 @@ Vec2 :: linalg.Vector2f32
 Rect :: linalg.Vector4f32
 Color :: linalg.Vector4f32
 
-CLR_BG :: Color{0.02, 0.02, 0.05, 1}
-CLR_BG_SECONDARY :: Color{0.03, 0.03, 0.10, 1}
-CLR_BORDER :: Color{0.17, 0.18, 0.22, 1}
-CLR_BTN_BG :: Color{0.15, 0.73, 0.3, 1}
-CLR_BTN_TEXT :: CLR_BG
-CLR_TEXT :: Color{0.9, 0.9, 0.9, 1}
+CLR_BLACK_100 :: Color{0.02, 0.02, 0.05, 1}
+CLR_BLACK_200 :: Color{0.03, 0.03, 0.10, 1}
+CLR_BLACK_300 :: Color{0.17, 0.18, 0.22, 1}
+CLR_WHITE_100 :: Color{0.9, 0.9, 0.9, 1}
+CLR_GREEN_100 :: Color{0.15, 0.73, 0.3, 1}
 
 rect_collides :: proc(r: Rect, other: Vec2) -> bool {
 	inside_x := r.x <= other.x && r.x + r.z >= other.x
@@ -43,13 +42,10 @@ Menu :: struct {
 }
 
 menu_layout :: proc(ui_menu: ^Menu, screen_size: Vec2, allocator := context.temp_allocator) {
-	clr_fill := CLR_BTN_BG
-	clr_btn_text := CLR_BTN_TEXT
-
 	// buttons
 
-	ui.button_init(&ui_menu.sp_btn, Vec2{200, 40}, "Play singleplayer", clr_fill, clr_btn_text)
-	ui.button_init(&ui_menu.mp_btn, Vec2{200, 40}, "Play multiplayer", clr_fill, clr_btn_text)
+	ui.button_init(&ui_menu.sp_btn, Vec2{200, 40}, "Play singleplayer")
+	ui.button_init(&ui_menu.mp_btn, Vec2{200, 40}, "Play multiplayer")
 
 	buttons: ui.Block
 	ui.block_init(&buttons, .Vertical, spacing = 20, alignment = .Center, allocator = allocator)
@@ -59,7 +55,7 @@ menu_layout :: proc(ui_menu: ^Menu, screen_size: Vec2, allocator := context.temp
 
 	// screen
 
-	ui.text_init(&ui_menu.header, "Tetris showdown", CLR_TEXT)
+	ui.text_init(&ui_menu.header, "Tetris showdown")
 
 	screen_layout: ui.Block
 	ui.block_init(
@@ -132,13 +128,12 @@ step :: proc(delta_time: f64) -> bool {
 				game.sp_process_event(&ctx.singleplayer, &event)
 			}
 
-			// global
-
-			#partial switch event.kind {
-			case .Resize:
+			if event.kind == .Resize {
 				ctx.window_size = event.resize.size
-				menu_layout(&ctx.menu, ctx.window_size)
-				game.sp_layout(&ctx.singleplayer, ctx.window_size)
+
+				if ctx.screen == .Menu {
+					menu_layout(&ctx.menu, ctx.window_size)
+				}
 			}
 		}
 	}
@@ -162,13 +157,19 @@ step :: proc(delta_time: f64) -> bool {
 					game.sp_init(
 						&ctx.singleplayer,
 						ctx.window_size,
-						clr_text = CLR_TEXT,
-						clr_card_bg = CLR_BG_SECONDARY,
-						clr_card_border = CLR_BORDER,
+						clr_card_bg = CLR_BLACK_200,
+						clr_card_border = CLR_BLACK_300,
+						clr_text_light = CLR_WHITE_100,
+						clr_text_dark = CLR_BLACK_100,
+						clr_accent = CLR_GREEN_100,
 					)
 					game.sp_layout(&ctx.singleplayer, ctx.window_size)
 				}
 			case .Singleplayer:
+				sp := &ctx.singleplayer
+				if rect_collides(sp.pause_button.rect, mouse) {
+					game.sp_pause_button_click(sp, ctx.window_size)
+				}
 			}
 		}
 	}
@@ -183,14 +184,22 @@ step :: proc(delta_time: f64) -> bool {
 	}
 
 	{ 	// draw
-		clr_bg := CLR_BG
+		clr_bg := CLR_BLACK_100
 		platform.fill_rect(&Rect{0, 0, ctx.window_size.x, ctx.window_size.y}, &clr_bg)
 
 		switch ctx.screen {
 		case .Menu:
-			ui.text_draw(&ctx.menu.header)
-			ui.button_draw(&ctx.menu.sp_btn)
-			ui.button_draw(&ctx.menu.mp_btn)
+			ui.text_draw(&ctx.menu.header, clr_bg = CLR_WHITE_100)
+			ui.button_draw(
+				&ctx.menu.sp_btn,
+				clr_btn_bg = CLR_GREEN_100,
+				clr_text_bg = CLR_BLACK_100,
+			)
+			ui.button_draw(
+				&ctx.menu.mp_btn,
+				clr_btn_bg = CLR_GREEN_100,
+				clr_text_bg = CLR_BLACK_100,
+			)
 		case .Singleplayer:
 			game.sp_draw(&ctx.singleplayer)
 		}

@@ -83,6 +83,26 @@ draw_rect :: proc(rect: Rect, flags: Modifiers_Flags, clr_bg := Color{}, clr_bor
 	}
 }
 
+draw_text :: proc(
+	pos: Vec2,
+	text: string,
+	flags: Modifiers_Flags,
+	clr_bg := Color{},
+	clr_border := Color{},
+) {
+	p := pos
+
+	if .Background in flags {
+		c := clr_bg
+		platform.fill_text(&p, &c, text)
+	}
+
+	if .Border in flags {
+		c := clr_border
+		platform.stroke_text(&p, &c, text)
+	}
+}
+
 Block_Direction :: enum {
 	Horizontal,
 	Vertical,
@@ -231,13 +251,9 @@ Button :: struct {
 	text:      string,
 	// button text rect relative to the button origin
 	text_rect: Rect,
-
-	// clrs
-	clr_fill:  Color,
-	clr_text:  Color,
 }
 
-button_init :: proc(button: ^Button, size: Vec2, text: string, clr_fill, clr_text: Color) {
+button_init :: proc(button: ^Button, size: Vec2, text: string) {
 	button.rect.zw = size
 
 	text_size: Vec2
@@ -248,62 +264,74 @@ button_init :: proc(button: ^Button, size: Vec2, text: string, clr_fill, clr_tex
 
 	button.text_rect.zw = text_size
 	button.text_rect.xy = size / 2 - text_size / 2
-
-	button.clr_fill = clr_fill
-	button.clr_text = clr_text
 }
 
-button_draw :: proc(button: ^Button) {
-	platform.fill_rect(&button.rect, &button.clr_fill)
-
-	text_pos := button.rect.xy + button.text_rect.xy
-	platform.fill_text(&text_pos, &button.clr_text, button.text)
-
-	// 	platform.draw_rect(
-	// 		&Rect{text_pos.x, text_pos.y, button.text_rect.z, button.text_rect.w},
-	// 		&Color{1, 0, 0, 1},
-	// 	)
+button_draw :: proc(
+	button: ^Button,
+	btn_modifiers := Modifiers_Flags{.Background},
+	clr_btn_bg := Color{},
+	clr_btn_border := Color{},
+	text_modifiers := Modifiers_Flags{.Background},
+	clr_text_bg := Color{},
+	clr_text_border := Color{},
+) {
+	draw_rect(button.rect, btn_modifiers, clr_bg = clr_btn_bg, clr_border = clr_btn_border)
+	text_pos := button.text_rect.xy + button.rect.xy
+	draw_text(
+		text_pos,
+		button.text,
+		text_modifiers,
+		clr_bg = clr_text_bg,
+		clr_border = clr_text_border,
+	)
+	// platform.draw_rect(
+	// 	&Rect{text_pos.x, text_pos.y, button.text_rect.z, button.text_rect.w},
+	// 	&Color{1, 0, 0, 1},
+	// )
 }
 
 Text :: struct {
 	rect: Rect,
 	text: string,
-	clr:  Color,
 }
 
-text_init :: proc(text: ^Text, str: string, clr: Color) {
+text_init :: proc(text: ^Text, str: string) {
 	text_size: Vec2
 	platform.measure_text(&text_size, str)
 	text.rect.zw = text_size
 	text.text = str
-	text.clr = clr
 }
 
-text_draw :: proc(text: ^Text) {
-	pos := text.rect.xy
-	platform.fill_text(&pos, &text.clr, text.text)
+text_draw :: proc(
+	text: ^Text,
+	modifiers := Modifiers_Flags{.Background},
+	clr_bg := Color{},
+	clr_border := Color{},
+) {
+	draw_text(text.rect.xy, text.text, modifiers, clr_bg = clr_bg, clr_border = clr_border)
 }
 
 Text_Mono :: struct {
 	rect:       Rect,
 	text:       string,
 	char_width: f32,
-	clr:        Color,
 }
 
-text_mono_init :: proc(text_mono: ^Text_Mono, text: string, clr: Color) {
-	{
-		char_size: Vec2
-		platform.font_metrics_max(&char_size)
-		text_mono.char_width = char_size.x
-		text_mono.rect = Rect{0, 0, f32(len(text)) * char_size.x, char_size.y}
-	}
-
+text_mono_init :: proc(text_mono: ^Text_Mono, text: string) {
 	text_mono.text = text
-	text_mono.clr = clr
+
+	char_size: Vec2
+	platform.font_metrics_max(&char_size)
+	text_mono.char_width = char_size.x
+	text_mono.rect = Rect{0, 0, f32(len(text)) * char_size.x, char_size.y}
 }
 
-text_mono_draw :: proc(text_mono: ^Text_Mono) {
+text_mono_draw :: proc(
+	text_mono: ^Text_Mono,
+	modifiers := Modifiers_Flags{.Background},
+	clr_bg := Color{},
+	clr_border := Color{},
+) {
 	for _, i in text_mono.text {
 		offset := f32(i) * text_mono.char_width
 		cell_rect := Rect {
@@ -321,7 +349,6 @@ text_mono_draw :: proc(text_mono: ^Text_Mono) {
 		char_rect.zw = char_size
 		center(cell_rect, &char_rect)
 
-		pos := char_rect.xy
-		platform.fill_text(&pos, &text_mono.clr, char)
+		draw_text(char_rect.xy, char, modifiers, clr_bg = clr_bg, clr_border = clr_border)
 	}
 }

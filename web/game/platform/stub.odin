@@ -13,6 +13,7 @@ fill_rect :: proc(rect: ^Rect, color: ^Color) {}
 measure_text :: proc(size: ^Vec2, text: string) {}
 font_metrics_max :: proc(size: ^Vec2) {}
 fill_text :: proc(pos: ^Vec2, color: ^Color, text: string) {}
+stroke_text :: proc(pos: ^Vec2, color: ^Color, text: string) {}
 
 // events
 get_mouse_state :: proc(mx, my: ^f32, btn: ^u8) {}

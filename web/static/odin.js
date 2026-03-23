@@ -296,6 +296,16 @@ async function main() {
                 canvasCtx.fillStyle = readColor(memory, color_ptr)
                 canvasCtx.fillText(text, pos[0], pos[1])
             },
+            stroke_text(pos_ptr, color_ptr, text_ptr, text_len) {
+                const pos = readVec2(memory, pos_ptr)
+                const text = readString(memory, text_ptr, text_len)
+
+                canvasCtx.font = font.name
+                canvasCtx.textBaseline = "top"
+                canvasCtx.textAlign = "left"
+                canvasCtx.strokeStyle = readColor(memory, color_ptr)
+                canvasCtx.strokeText(text, pos[0], pos[1])
+            },
             get_mouse_state(x_ptr, y_ptr, btn_ptr) {
                 memView.setFloat32(x_ptr, mousex, true)
                 memView.setFloat32(y_ptr, mousey, true)
