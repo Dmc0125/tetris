@@ -8,13 +8,27 @@ import platform "../platform"
 import ui "../ui"
 
 Clock :: struct {
-	time:       f64,
-	multiplier: f64,
+	time:            f64,
+	base_multiplier: f64,
+	multiplier:      f64,
+	last_update:     f64,
+	time_step:       f64,
 }
 
-clock_init :: proc(clock: ^Clock) {
+clock_init :: proc(clock: ^Clock, base_multiplier: f64, time_step: f64) {
 	clock.time = 0
-	clock.multiplier = 1
+	clock.base_multiplier = base_multiplier
+	clock.multiplier = base_multiplier
+	clock.time_step = time_step
+	clock.last_update = 0
+}
+
+clock_pause :: proc(clock: ^Clock) {
+	clock.multiplier = 0
+}
+
+clock_resume :: proc(clock: ^Clock) {
+	clock.multiplier = clock.base_multiplier
 }
 
 clock_frame_start :: proc(clock: ^Clock, delta_time: f64) {
@@ -195,19 +209,14 @@ Singleplayer :: struct {
 
 	//
 	clock:                           Clock,
-	last_update:                     f64,
-	timestep:                        f64,
 	state:                           SingleplayerState,
 	countdown:                       int,
-
-	// game
 	cols, rows:                      int,
 	queue:                           SP_Queue,
 	tetromino:                       Tetromino,
 	filled_cells:                    [dynamic]Cube,
 	rows_score:                      f64,
 	score:                           f64,
-	default_time_multiplier:         f64,
 }
 
 sp_init :: proc(
@@ -232,6 +241,8 @@ sp_init :: proc(
 
 	sp_queue_init(&sp.queue)
 	tetromino_init(&sp.tetromino, sp_queue_next(&sp.queue), sp)
+
+	clock_init(&sp.clock, 1, 1)
 
 	sp.clr_card_bg = clr_card_bg
 	sp.clr_card_border = clr_card_border
@@ -275,10 +286,6 @@ sp_init :: proc(
 	// right side
 
 	// time
-
-	sp.timestep = 1
-	sp.default_time_multiplier = 1
-	clock_init(&sp.clock)
 
 	ui.text_mono_init(&sp.time_text, "00:00:00.00")
 
@@ -325,11 +332,7 @@ sp_reset :: proc(sp: ^Singleplayer, window_size: Vec2) {
 
 	sp_queue_init(&sp.queue)
 	tetromino_init(&sp.tetromino, sp_queue_next(&sp.queue), sp)
-
-	sp.timestep = 1
-	sp.default_time_multiplier = 1
-	clock_init(&sp.clock)
-	sp.last_update = 0
+	clock_init(&sp.clock, 1, 1)
 
 	sp.rows_score = 0
 	sp.score = 0
@@ -402,7 +405,7 @@ sp_update :: proc(sp: ^Singleplayer) {
 	#partial switch sp.state {
 	case .Countdown:
 		// update every second
-		if sp.last_update + sp.timestep < sp.clock.time {
+		if clock := &sp.clock; clock.last_update + clock.time_step < clock.time {
 			sp.countdown -= 1
 			updated = true
 		}
@@ -412,7 +415,7 @@ sp_update :: proc(sp: ^Singleplayer) {
 		}
 	case .Game:
 		update_game :: proc(sp: ^Singleplayer) -> (updated: bool) {
-			if sp.last_update + sp.timestep > sp.clock.time {
+			if clock := &sp.clock; clock.last_update + clock.time_step > clock.time {
 				return
 			}
 
@@ -428,6 +431,7 @@ sp_update :: proc(sp: ^Singleplayer) {
 				for c in tetromino_abs_coords(t.coords, t.pos) do if is_cell_filled(c, sp) {
 					t.kind = .None
 					sp.state = .GameOver
+					clock_pause(&sp.clock)
 					break
 				}
 
@@ -484,9 +488,8 @@ sp_update :: proc(sp: ^Singleplayer) {
 						}
 
 						sp.rows_score += 10
-						sp.default_time_multiplier = clamp(sp.default_time_multiplier + 0.1, 1, 4)
-						sp.clock.multiplier = sp.default_time_multiplier
-						fmt.println(sp.clock.multiplier)
+						sp.clock.base_multiplier = clamp(sp.clock.base_multiplier + 0.1, 1, 4)
+						sp.clock.multiplier = sp.clock.base_multiplier
 					}
 				}
 			}
@@ -498,13 +501,11 @@ sp_update :: proc(sp: ^Singleplayer) {
 
 		updated = update_game(sp)
 	case .GameOver:
-		pause_button_pos := sp.pause_button.rect.xy
-		ui.button_init(&sp.pause_button, sp.pause_button.rect.zw, "Play again")
-		sp.pause_button.rect.xy = pause_button_pos
+		ui.button_set_text(&sp.pause_button, "play again")
 	}
 
 	if updated {
-		sp.last_update = sp.clock.time
+		sp.clock.last_update = sp.clock.time
 	}
 }
 
@@ -594,7 +595,7 @@ sp_draw :: proc(sp: ^Singleplayer) {
 	#partial switch sp.state {
 	case .Countdown:
 		sp.time_text.text = "00:00:00.00"
-	case .Game:
+	case .Game, .Paused, .GameOver:
 		total := int(sp.clock.time) - 3
 		hours := total / 3600
 		minutes := (total / 60) % 60
@@ -722,30 +723,25 @@ sp_process_event :: proc(sp: ^Singleplayer, event: ^platform.Event) {
 		case .Keyup:
 			#partial switch event.keyboard.key {
 			case .DOWN:
-				sp.clock.multiplier = sp.default_time_multiplier
+				sp.clock.multiplier = sp.clock.base_multiplier
 			}
-		case .Resize:
-			sp_layout(sp, event.resize.size)
 		}
 	}
+
 }
 
 sp_pause_button_click :: proc(sp: ^Singleplayer, window_size: Vec2) {
-	update_pause_btn_text :: proc(sp: ^Singleplayer, text: string) {
-		pause_button_pos := sp.pause_button.rect.xy
-		ui.button_init(&sp.pause_button, sp.pause_button.rect.zw, text)
-		sp.pause_button.rect.xy = pause_button_pos
-	}
-
 	#partial switch sp.state {
 	case .Game:
-		update_pause_btn_text(sp, "resume")
+		ui.button_set_text(&sp.pause_button, "resume")
 		sp.state = .Paused
+		clock_pause(&sp.clock)
 	case .Paused:
-		update_pause_btn_text(sp, "pause")
+		ui.button_set_text(&sp.pause_button, "pause")
 		sp.state = .Game
+		clock_resume(&sp.clock)
 	case .GameOver:
-		update_pause_btn_text(sp, "pause")
+		ui.button_set_text(&sp.pause_button, "pause")
 		sp_reset(sp, window_size)
 	}
 }

@@ -131,8 +131,11 @@ step :: proc(delta_time: f64) -> bool {
 			if event.kind == .Resize {
 				ctx.window_size = event.resize.size
 
-				if ctx.screen == .Menu {
+				#partial switch ctx.screen {
+				case .Menu:
 					menu_layout(&ctx.menu, ctx.window_size)
+				case .Singleplayer:
+					game.sp_layout(&ctx.singleplayer, ctx.window_size)
 				}
 			}
 		}

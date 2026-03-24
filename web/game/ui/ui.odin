@@ -266,6 +266,20 @@ button_init :: proc(button: ^Button, size: Vec2, text: string) {
 	button.text_rect.xy = size / 2 - text_size / 2
 }
 
+button_set_text :: proc(button: ^Button, text: string) {
+	p := button.rect.xy
+
+	text_size: Vec2
+	platform.measure_text(&text_size, text)
+	assert(text_size.x < button.rect.z)
+	assert(text_size.y < button.rect.w)
+	button.text = text
+	button.text_rect.zw = text_size
+	button.text_rect.xy = button.rect.zw / 2 - text_size / 2
+
+	button.rect.xy = p
+}
+
 button_draw :: proc(
 	button: ^Button,
 	btn_modifiers := Modifiers_Flags{.Background},
