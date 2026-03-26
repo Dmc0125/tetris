@@ -6,6 +6,12 @@ Vec2 :: linalg.Vector2f32
 Rect :: linalg.Vector4f32
 Color :: linalg.Vector4f32
 
+Font_Size :: enum u8 {
+	Small,
+	Medium,
+	Large,
+}
+
 // events
 
 EventKind :: enum u8 {

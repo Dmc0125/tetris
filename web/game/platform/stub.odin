@@ -10,10 +10,16 @@ draw_rect :: proc(rect: ^Rect, color: ^Color) {}
 fill_rect :: proc(rect: ^Rect, color: ^Color) {}
 
 // font
+load_fonts :: proc(small: ^Vec2, medium: ^Vec2, large: ^Vec2) {}
 measure_text :: proc(size: ^Vec2, text: string) {}
 font_metrics_max :: proc(size: ^Vec2) {}
 fill_text :: proc(pos: ^Vec2, color: ^Color, text: string) {}
 stroke_text :: proc(pos: ^Vec2, color: ^Color, text: string) {}
+
+measure_text_2 :: proc(size: ^Vec2, text: string, font_size: Font_Size) {}
+fill_text_2 :: proc(pos: ^Vec2, color: ^Color, text: string, font_size: Font_Size) {}
+stroke_text_2 :: proc(pos: ^Vec2, color: ^Color, text: string, font_size: Font_Size) {}
+
 
 // events
 get_mouse_state :: proc(mx, my: ^f32, btn: ^u8) {}

@@ -186,7 +186,11 @@ async function main() {
         return { name: font, char: { width: maxWidth, height: maxHeight }, charMap: chars }
     }
 
-    const font = await loadFont(20)
+    const fonts = [
+        await loadFont(16),
+        await loadFont(20),
+        await loadFont(28),
+    ]
 
     // load wasm 
 
@@ -269,11 +273,35 @@ async function main() {
                 canvasCtx.fillStyle = readColor(memory, color_ptr)
                 canvasCtx.fillRect(rect[0], rect[1], rect[2], rect[3])
             },
+            load_fonts(small_ptr, medium_ptr, large_ptr) {
+                const smallSize = new Float32Array(memory, small_ptr, 2)
+                smallSize[0] = fonts[0].char.width
+                smallSize[1] = fonts[0].char.height
+
+                const mediumSize = new Float32Array(memory, medium_ptr, 2)
+                mediumSize[0] = fonts[1].char.width
+                mediumSize[1] = fonts[1].char.height
+
+                const largeSize = new Float32Array(memory, large_ptr, 2)
+                largeSize[0] = fonts[2].char.width
+                largeSize[1] = fonts[2].char.height
+            },
             measure_text(size_ptr, text_ptr, text_len) {
                 const size = new Float32Array(memory, size_ptr, 2)
 
                 const text = readString(memory, text_ptr, text_len)
-                canvasCtx.font = font.name
+                canvasCtx.font = fonts[1].name
+                canvasCtx.textBaseline = "top"
+                canvasCtx.textAlign = "left"
+                const m = canvasCtx.measureText(text)
+
+                size[0] = m.width
+                size[1] = m.fontBoundingBoxDescent
+            },
+            measure_text_2(size_ptr, text_ptr, text_len, font_size) {
+                const size = new Float32Array(memory, size_ptr, 2)
+                const text = readString(memory, text_ptr, text_len)
+                canvasCtx.font = fonts[font_size].name
                 canvasCtx.textBaseline = "top"
                 canvasCtx.textAlign = "left"
                 const m = canvasCtx.measureText(text)
@@ -283,14 +311,24 @@ async function main() {
             },
             font_metrics_max(size_ptr) {
                 const size = new Float32Array(memory, size_ptr, 2)
-                size[0] = font.char.width
-                size[1] = font.char.height
+                size[0] = fonts[1].char.width
+                size[1] = fonts[1].char.height
             },
             fill_text(pos_ptr, color_ptr, text_ptr, text_len) {
                 const pos = readVec2(memory, pos_ptr)
                 const text = readString(memory, text_ptr, text_len)
 
-                canvasCtx.font = font.name
+                canvasCtx.font = fonts[1].name
+                canvasCtx.textBaseline = "top"
+                canvasCtx.textAlign = "left"
+                canvasCtx.fillStyle = readColor(memory, color_ptr)
+                canvasCtx.fillText(text, pos[0], pos[1])
+            },
+            fill_text_2(pos_ptr, color_ptr, text_ptr, text_len, font_size) {
+                const pos = readVec2(memory, pos_ptr)
+                const text = readString(memory, text_ptr, text_len)
+
+                canvasCtx.font = fonts[font_size].name
                 canvasCtx.textBaseline = "top"
                 canvasCtx.textAlign = "left"
                 canvasCtx.fillStyle = readColor(memory, color_ptr)
@@ -300,7 +338,17 @@ async function main() {
                 const pos = readVec2(memory, pos_ptr)
                 const text = readString(memory, text_ptr, text_len)
 
-                canvasCtx.font = font.name
+                canvasCtx.font = fonts[1].name
+                canvasCtx.textBaseline = "top"
+                canvasCtx.textAlign = "left"
+                canvasCtx.strokeStyle = readColor(memory, color_ptr)
+                canvasCtx.strokeText(text, pos[0], pos[1])
+            },
+            stroke_text_2(pos_ptr, color_ptr, text_ptr, text_len, font_size) {
+                const pos = readVec2(memory, pos_ptr)
+                const text = readString(memory, text_ptr, text_len)
+
+                canvasCtx.font = fonts[font_size].name
                 canvasCtx.textBaseline = "top"
                 canvasCtx.textAlign = "left"
                 canvasCtx.strokeStyle = readColor(memory, color_ptr)

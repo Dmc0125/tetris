@@ -10,6 +10,12 @@ Vec2 :: platform.Vec2
 Rect :: platform.Rect
 Color :: platform.Color
 
+fonts := [platform.Font_Size]Vec2 {
+	.Small  = Vec2{},
+	.Medium = Vec2{},
+	.Large  = Vec2{},
+}
+
 Alignment :: enum {
 	Start,
 	Center,
@@ -28,6 +34,20 @@ center :: proc {
 	center_in_size,
 	center_in_container,
 }
+
+center_horizontal_in_size :: proc(container: Vec2, child: ^Rect) {
+	child.x = container.x / 2 - child.z / 2
+}
+
+center_horizontal_in_container :: proc(container: Rect, child: ^Rect) {
+	child.x = container.x + container.z / 2 - child.z / 2
+}
+
+center_horizontal :: proc {
+	center_horizontal_in_size,
+	center_horizontal_in_container,
+}
+
 
 Element :: union {
 	^Block,
@@ -87,6 +107,7 @@ draw_text :: proc(
 	pos: Vec2,
 	text: string,
 	flags: Modifiers_Flags,
+	size: platform.Font_Size,
 	clr_bg := Color{},
 	clr_border := Color{},
 ) {
@@ -94,12 +115,12 @@ draw_text :: proc(
 
 	if .Background in flags {
 		c := clr_bg
-		platform.fill_text(&p, &c, text)
+		platform.fill_text_2(&p, &c, text, size)
 	}
 
 	if .Border in flags {
 		c := clr_border
-		platform.stroke_text(&p, &c, text)
+		platform.stroke_text_2(&p, &c, text, size)
 	}
 }
 
@@ -255,33 +276,12 @@ Button :: struct {
 
 button_init :: proc(button: ^Button, size: Vec2, text: string) {
 	button.rect.zw = size
-
-	text_size: Vec2
-	platform.measure_text(&text_size, text)
-	assert(text_size.x < size.x)
-	assert(text_size.y < size.y)
 	button.text = text
-
-	button.text_rect.zw = text_size
-	button.text_rect.xy = size / 2 - text_size / 2
-}
-
-button_set_text :: proc(button: ^Button, text: string) {
-	p := button.rect.xy
-
-	text_size: Vec2
-	platform.measure_text(&text_size, text)
-	assert(text_size.x < button.rect.z)
-	assert(text_size.y < button.rect.w)
-	button.text = text
-	button.text_rect.zw = text_size
-	button.text_rect.xy = button.rect.zw / 2 - text_size / 2
-
-	button.rect.xy = p
 }
 
 button_draw :: proc(
 	button: ^Button,
+	font_size: platform.Font_Size,
 	btn_modifiers := Modifiers_Flags{.Background},
 	clr_btn_bg := Color{},
 	clr_btn_border := Color{},
@@ -290,30 +290,40 @@ button_draw :: proc(
 	clr_text_border := Color{},
 ) {
 	draw_rect(button.rect, btn_modifiers, clr_bg = clr_btn_bg, clr_border = clr_btn_border)
-	text_pos := button.text_rect.xy + button.rect.xy
-	draw_text(
-		text_pos,
-		button.text,
-		text_modifiers,
-		clr_bg = clr_text_bg,
-		clr_border = clr_text_border,
-	)
-	// platform.draw_rect(
-	// 	&Rect{text_pos.x, text_pos.y, button.text_rect.z, button.text_rect.w},
-	// 	&Color{1, 0, 0, 1},
+
+	text_size: Vec2
+	platform.measure_text_2(&text_size, button.text, font_size)
+	text_pos := button.rect.xy + button.rect.zw / 2 - text_size / 2
+
+	c := clr_text_bg
+	platform.fill_text_2(&text_pos, &c, button.text, font_size)
+
+	// draw_text(
+	// 	text_pos,
+	// 	button.text,
+	// 	text_modifiers,
+	// 	clr_bg = clr_text_bg,
+	// 	clr_border = clr_text_border,
 	// )
+	// platform.draw_rect(&Rect{text_pos.x, text_pos.y, text_size.x, text_size.y}, &Color{1, 0, 0, 1})
 }
 
 Text :: struct {
-	rect: Rect,
-	text: string,
+	rect:      Rect,
+	text:      string,
+	font_size: platform.Font_Size,
 }
 
-text_init :: proc(text: ^Text, str: string) {
-	text_size: Vec2
-	platform.measure_text(&text_size, str)
-	text.rect.zw = text_size
+text_init :: proc(text: ^Text, str: string, font_size: platform.Font_Size) {
 	text.text = str
+	text.font_size = font_size
+	text_layout(text)
+}
+
+text_layout :: proc(text: ^Text) {
+	text_size: Vec2
+	platform.measure_text_2(&text_size, text.text, text.font_size)
+	text.rect.zw = text_size
 }
 
 text_draw :: proc(
@@ -322,22 +332,33 @@ text_draw :: proc(
 	clr_bg := Color{},
 	clr_border := Color{},
 ) {
-	draw_text(text.rect.xy, text.text, modifiers, clr_bg = clr_bg, clr_border = clr_border)
+	draw_text(
+		text.rect.xy,
+		text.text,
+		modifiers,
+		text.font_size,
+		clr_bg = clr_bg,
+		clr_border = clr_border,
+	)
 }
 
 Text_Mono :: struct {
 	rect:       Rect,
 	text:       string,
 	char_width: f32,
+	font_size:  platform.Font_Size,
 }
 
-text_mono_init :: proc(text_mono: ^Text_Mono, text: string) {
+text_mono_init :: proc(text_mono: ^Text_Mono, text: string, font_size: platform.Font_Size) {
 	text_mono.text = text
+	text_mono.font_size = font_size
+	text_mono_layout(text_mono)
+}
 
-	char_size: Vec2
-	platform.font_metrics_max(&char_size)
+text_mono_layout :: proc(text_mono: ^Text_Mono) {
+	char_size := fonts[text_mono.font_size]
 	text_mono.char_width = char_size.x
-	text_mono.rect = Rect{0, 0, f32(len(text)) * char_size.x, char_size.y}
+	text_mono.rect = Rect{0, 0, f32(len(text_mono.text)) * char_size.x, char_size.y}
 }
 
 text_mono_draw :: proc(
@@ -357,12 +378,19 @@ text_mono_draw :: proc(
 
 		char := text_mono.text[i:i + 1]
 		char_size: Vec2
-		platform.measure_text(&char_size, char)
+		platform.measure_text_2(&char_size, char, text_mono.font_size)
 
 		char_rect: Rect
 		char_rect.zw = char_size
 		center(cell_rect, &char_rect)
 
-		draw_text(char_rect.xy, char, modifiers, clr_bg = clr_bg, clr_border = clr_border)
+		draw_text(
+			char_rect.xy,
+			char,
+			modifiers,
+			text_mono.font_size,
+			clr_bg = clr_bg,
+			clr_border = clr_border,
+		)
 	}
 }

@@ -55,7 +55,7 @@ menu_layout :: proc(ui_menu: ^Menu, screen_size: Vec2, allocator := context.temp
 
 	// screen
 
-	ui.text_init(&ui_menu.header, "Tetris showdown")
+	ui.text_init(&ui_menu.header, "Tetris showdown", .Medium)
 
 	screen_layout: ui.Block
 	ui.block_init(
@@ -99,6 +99,7 @@ init :: proc() {
 
 	platform.set_target_fps(144)
 	platform.window_size(&ctx.window_size)
+	platform.load_fonts(&ui.fonts[.Small], &ui.fonts[.Medium], &ui.fonts[.Large])
 
 	menu_layout(&ctx.menu, ctx.window_size)
 }
@@ -195,16 +196,18 @@ step :: proc(delta_time: f64) -> bool {
 			ui.text_draw(&ctx.menu.header, clr_bg = CLR_WHITE_100)
 			ui.button_draw(
 				&ctx.menu.sp_btn,
+				.Medium,
 				clr_btn_bg = CLR_GREEN_100,
 				clr_text_bg = CLR_BLACK_100,
 			)
 			ui.button_draw(
 				&ctx.menu.mp_btn,
+				.Medium,
 				clr_btn_bg = CLR_GREEN_100,
 				clr_text_bg = CLR_BLACK_100,
 			)
 		case .Singleplayer:
-			game.sp_draw(&ctx.singleplayer)
+			game.sp_draw(&ctx.singleplayer, ctx.window_size)
 		}
 
 		{ 	// fps
