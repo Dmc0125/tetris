@@ -6,6 +6,8 @@ Vec2 :: linalg.Vector2f32
 Rect :: linalg.Vector4f32
 Color :: linalg.Vector4f32
 
+// font
+
 Font_Size :: enum u8 {
 	Small,
 	Medium,
@@ -79,3 +81,17 @@ MOUSE_BTN_SECONDARY: u8 : 1 << 1
 MOUSE_BTN_AUXILIARY: u8 : 1 << 2
 MOUSE_BTN_BROWSER_BACK: u8 : 1 << 3
 MOUSE_BTN_BROWSER_FORWARD: u8 : 1 << 4
+
+MouseState :: enum {
+	None,
+	Click,
+	Holding,
+	Pressed,
+}
+
+Mouse :: struct {
+	pos:        Vec2,
+	state:      MouseState,
+	btn:        u8,
+	clicked_at: f64,
+}

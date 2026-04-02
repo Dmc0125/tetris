@@ -19,64 +19,140 @@ CLR_BLACK_300 :: Color{0.17, 0.18, 0.22, 1}
 CLR_WHITE_100 :: Color{0.9, 0.9, 0.9, 1}
 CLR_GREEN_100 :: Color{0.15, 0.73, 0.3, 1}
 
-rect_collides :: proc(r: Rect, other: Vec2) -> bool {
-	inside_x := r.x <= other.x && r.x + r.z >= other.x
-	inside_y := r.y <= other.y && r.y + r.w >= other.y
-	return inside_x && inside_y
-}
-
-Mouse :: struct {
-	using pos: Vec2,
-	btn:       u8,
-}
-
 Screen :: enum {
 	Menu,
 	Singleplayer,
 }
 
 Menu :: struct {
-	header: ui.Text,
-	sp_btn: ui.Button,
-	mp_btn: ui.Button,
+	window_size: Vec2,
+	container:   ui.Container,
+	header:      ui.Text,
+	sp_btn:      ui.Button,
+	mp_btn:      ui.Button,
 }
 
-menu_layout :: proc(ui_menu: ^Menu, screen_size: Vec2, allocator := context.temp_allocator) {
-	// buttons
+menu_init :: proc(
+	menu: ^Menu,
+	window_size: Vec2,
+	perm_allocator, temp_allocator: runtime.Allocator,
+) {
+	menu.window_size = window_size
 
-	ui.button_init(&ui_menu.sp_btn, Vec2{200, 40}, "Play singleplayer")
-	ui.button_init(&ui_menu.mp_btn, Vec2{200, 40}, "Play multiplayer")
+	menu.header = ui.Text {
+		value = "Tetris",
+		appearance = ui.Appearance{flags = ui.Appearance_Flags{.Background}, bg = CLR_WHITE_100},
+	}
 
-	buttons: ui.Block
-	ui.block_init(&buttons, .Vertical, spacing = 20, alignment = .Center, allocator = allocator)
+	menu.sp_btn = ui.Button {
+		rect = Rect{0, 0, 200, 40},
+		text = "Tetris classic",
+		button_appearance = ui.Appearance {
+			flags = ui.Appearance_Flags{.Background},
+			bg = CLR_GREEN_100,
+		},
+		text_appearance = ui.Appearance {
+			flags = ui.Appearance_Flags{.Background},
+			bg = CLR_BLACK_100,
+		},
+	}
 
-	ui.block_add_child(&buttons, &ui_menu.sp_btn)
-	ui.block_add_child(&buttons, &ui_menu.mp_btn)
+	menu.mp_btn = ui.Button {
+		rect = Rect{0, 0, 200, 40},
+		text = "Coming soon",
+		button_appearance = ui.Appearance {
+			flags = ui.Appearance_Flags{.Background},
+			bg = CLR_GREEN_100,
+		},
+		text_appearance = ui.Appearance {
+			flags = ui.Appearance_Flags{.Background},
+			bg = CLR_BLACK_100,
+		},
+	}
 
-	// screen
+	menu.container = ui.Container {
+		perm_allocator = perm_allocator,
+		temp_allocator = temp_allocator,
+		sizing         = [2]ui.Sizing{.Full, .Auto},
+		direction      = .Vertical,
+		alignment      = .Center,
+	}
 
-	ui.text_init(&ui_menu.header, "Tetris showdown", .Medium)
+	//
 
-	screen_layout: ui.Block
-	ui.block_init(
-		&screen_layout,
-		.Vertical,
-		spacing = 100,
+	container := ui.container_init(
+		perm_allocator,
+		temp_allocator,
+		sizing = [2]ui.Sizing{.Auto, .Auto},
+		direction = .Vertical,
 		alignment = .Center,
-		allocator = allocator,
+		padding = Vec2{0, 100},
+		spacing = 100,
 	)
 
-	ui.block_add_child(&screen_layout, &ui_menu.header)
-	ui.block_add_child(&screen_layout, &buttons)
+	buttons := ui.container_init(
+		perm_allocator,
+		temp_allocator,
+		sizing = [2]ui.Sizing{.Auto, .Auto},
+		direction = .Vertical,
+		spacing = 20,
+	)
 
-	ui.center(screen_size, &screen_layout.rect)
-	ui.block_layout(&screen_layout)
+	ui.container_add_child(buttons, &menu.sp_btn)
+	ui.container_add_child(buttons, &menu.mp_btn)
+
+	ui.container_add_child(container, &menu.header)
+	ui.container_add_child(container, buttons)
+
+	ui.container_add_child(&menu.container, container)
+
+	menu_layout(menu)
+}
+
+menu_layout :: proc(menu: ^Menu) {
+	menu.header.font_size = .Large
+	menu.sp_btn.font_size = .Medium
+	menu.mp_btn.font_size = .Medium
+
+	ui.container_layout(&menu.container, menu.window_size)
+}
+
+Menu_Result :: enum {
+	None,
+	Singleplayer,
+}
+
+menu_update_and_draw :: proc(
+	menu: ^Menu,
+	events: [dynamic]platform.Event,
+	mouse: platform.Mouse,
+) -> (
+	result: Menu_Result,
+) {
+	for event in events {
+		if event.kind == .Resize {
+			menu.window_size = event.resize.size
+			menu_layout(menu)
+		}
+	}
+
+	if mouse.state == .Click && ui.rect_collides(menu.sp_btn.rect, mouse.pos) {
+		result = .Singleplayer
+		return
+	}
+
+	clr_bg := CLR_BLACK_100
+	platform.fill_rect(&Rect{0, 0, menu.window_size.x, menu.window_size.y}, &clr_bg)
+
+	ui.container_draw(&menu.container)
+
+	return
 }
 
 Context :: struct {
-	window_size:  Vec2,
+	time:         f64,
+	mouse:        platform.Mouse,
 	screen:       Screen,
-	mouse:        Mouse,
 	menu:         Menu,
 	singleplayer: game.Singleplayer,
 }
@@ -98,24 +174,35 @@ init :: proc() {
 	context.temp_allocator = mem.arena_allocator(&temp_allocator_arena)
 
 	platform.set_target_fps(144)
-	platform.window_size(&ctx.window_size)
 	platform.load_fonts(&ui.fonts[.Small], &ui.fonts[.Medium], &ui.fonts[.Large])
+	window_size: Vec2
+	platform.window_size(&window_size)
 
-	menu_layout(&ctx.menu, ctx.window_size)
+	menu_init(&ctx.menu, window_size, context.allocator, context.temp_allocator)
+	game.sp_init(
+		&ctx.singleplayer,
+		window_size,
+		clr_screen = CLR_BLACK_100,
+		clr_card_bg = CLR_BLACK_200,
+		clr_card_border = CLR_BLACK_300,
+		clr_text_light = CLR_WHITE_100,
+		clr_text_dark = CLR_BLACK_100,
+		clr_accent = CLR_GREEN_100,
+		perm_allocator = context.allocator,
+		temp_allocator = context.temp_allocator,
+	)
 }
 
 @(export)
 step :: proc(delta_time: f64) -> bool {
+	ctx.time += delta_time
+
 	context.allocator = mem.arena_allocator(&allocator_arena)
 	context.temp_allocator = mem.arena_allocator(&temp_allocator_arena)
 	free_all(context.temp_allocator)
-
 	context.random_generator = runtime.default_random_generator()
 
-	if ctx.screen == .Singleplayer {
-		game.clock_frame_start(&ctx.singleplayer.clock, delta_time)
-	}
-
+	events := make([dynamic]platform.Event, allocator = context.temp_allocator)
 	{
 		event: platform.Event
 		for {
@@ -124,100 +211,63 @@ step :: proc(delta_time: f64) -> bool {
 				break
 			}
 
-			#partial switch ctx.screen {
-			case .Singleplayer:
-				game.sp_process_event(&ctx.singleplayer, &event)
-			}
-
-			if event.kind == .Resize {
-				ctx.window_size = event.resize.size
-
-				#partial switch ctx.screen {
-				case .Menu:
-					menu_layout(&ctx.menu, ctx.window_size)
-				case .Singleplayer:
-					game.sp_layout(&ctx.singleplayer, ctx.window_size)
-				}
-			}
+			append(&events, event)
 		}
 	}
 
 	{ 	// mouse
-		mouse: Mouse
-		platform.get_mouse_state(&mouse.pos.x, &mouse.pos.y, &mouse.btn)
+		mouse_pos: Vec2
+		mouse_btn: u8
+		platform.get_mouse_state(&mouse_pos.x, &mouse_pos.y, &mouse_btn)
 		defer {
-			ctx.mouse = mouse
+			ctx.mouse.pos = mouse_pos
+			ctx.mouse.btn = mouse_btn
 		}
 
-		switch {
-		case mouse.btn & platform.MOUSE_BTN_PRIMARY != 0 &&
-		     ctx.mouse.btn & platform.MOUSE_BTN_PRIMARY == 0:
-			// click
-
-			switch ctx.screen {
-			case .Menu:
-				if rect_collides(ctx.menu.sp_btn.rect, mouse) {
-					ctx.screen = .Singleplayer
-					game.sp_init(
-						&ctx.singleplayer,
-						ctx.window_size,
-						clr_card_bg = CLR_BLACK_200,
-						clr_card_border = CLR_BLACK_300,
-						clr_text_light = CLR_WHITE_100,
-						clr_text_dark = CLR_BLACK_100,
-						clr_accent = CLR_GREEN_100,
-					)
-					game.sp_layout(&ctx.singleplayer, ctx.window_size)
-				}
-			case .Singleplayer:
-				sp := &ctx.singleplayer
-				if rect_collides(sp.pause_button.rect, mouse) {
-					game.sp_pause_button_click(sp, ctx.window_size)
-				}
+		switch ctx.mouse.state {
+		case .None:
+			if mouse_btn & platform.MOUSE_BTN_PRIMARY != 0 &&
+			   ctx.mouse.btn & platform.MOUSE_BTN_PRIMARY == 0 {
+				ctx.mouse.state = .Click
+				ctx.mouse.clicked_at = ctx.time
+			}
+		case .Click:
+			if mouse_btn & platform.MOUSE_BTN_PRIMARY != 0 &&
+			   ctx.mouse.btn & platform.MOUSE_BTN_PRIMARY != 0 {
+				ctx.mouse.state = .Holding
+			} else if mouse_btn == 0 {
+				ctx.mouse.state = .None
+			}
+		case .Holding:
+			if ctx.mouse.clicked_at + 0.250 < ctx.time {
+				ctx.mouse.state = .Pressed
+			} else if mouse_btn == 0 {
+				ctx.mouse.state = .None
+			}
+		case .Pressed:
+			if mouse_btn == 0 {
+				ctx.mouse.state = .None
 			}
 		}
 	}
 
-	{ 	// update
-		switch ctx.screen {
-		case .Menu:
-		case .Singleplayer:
-			game.sp_update(&ctx.singleplayer)
+	switch ctx.screen {
+	case .Menu:
+		if menu_update_and_draw(&ctx.menu, events, ctx.mouse) == .Singleplayer {
+			ctx.screen = .Singleplayer
+			game.sp_start(&ctx.singleplayer, ctx.menu.window_size)
 		}
-
+	case .Singleplayer:
+		game.sp_update_and_draw(&ctx.singleplayer, events, ctx.mouse, delta_time)
 	}
 
-	{ 	// draw
-		clr_bg := CLR_BLACK_100
-		platform.fill_rect(&Rect{0, 0, ctx.window_size.x, ctx.window_size.y}, &clr_bg)
-
-		switch ctx.screen {
-		case .Menu:
-			ui.text_draw(&ctx.menu.header, clr_bg = CLR_WHITE_100)
-			ui.button_draw(
-				&ctx.menu.sp_btn,
-				.Medium,
-				clr_btn_bg = CLR_GREEN_100,
-				clr_text_bg = CLR_BLACK_100,
-			)
-			ui.button_draw(
-				&ctx.menu.mp_btn,
-				.Medium,
-				clr_btn_bg = CLR_GREEN_100,
-				clr_text_bg = CLR_BLACK_100,
-			)
-		case .Singleplayer:
-			game.sp_draw(&ctx.singleplayer, ctx.window_size)
-		}
-
-		{ 	// fps
-			fps: f32
-			platform.get_actual_fps(&fps)
-			text := fmt.tprintf("%.0f", fps)
-			pos := Vec2{ctx.window_size.x - 50, 20}
-			platform.fill_text(&pos, &Color{1, 0.9, 0.2, 1}, text)
-		}
-	}
+	// { 	// fps
+	// 	fps: f32
+	// 	platform.get_actual_fps(&fps)
+	// 	text := fmt.tprintf("%.0f", fps)
+	// 	pos := Vec2{ctx.window_size.x - 50, 20}
+	// 	platform.fill_text(&pos, &Color{1, 0.9, 0.2, 1}, text)
+	// }
 
 	return true
 }

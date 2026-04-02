@@ -3,6 +3,7 @@ package game
 import "base:runtime"
 import "core:fmt"
 import "core:math/rand"
+import "core:mem"
 import "core:time"
 
 import platform "../platform"
@@ -150,6 +151,7 @@ tetromino_abs_coords :: proc(coords: [4]Coords, pos: Coords) -> (abs_coords: [4]
 }
 
 SingleplayerState :: enum {
+	Ready,
 	Countdown,
 	Game,
 	Paused,
@@ -179,124 +181,63 @@ sp_queue_next :: proc(queue: ^SP_Queue) -> TetrominoKind {
 	return queue.bag[k]
 }
 
-SP_LAYOUT_SMALL_BP :: 700
-
-SP_Queue_Ui :: struct {
-	container:                 ui.Block,
-	header:                    ui.Text,
-	tetromino_block_container: ui.Block,
-	tetromino_container:       ui.Block,
-}
-
-sp_queue_ui_init :: proc(
-	q: ^SP_Queue_Ui,
-	board_width, time_width: f32,
-	window_size: Vec2,
-	allocator: runtime.Allocator,
-) {
-	q.header = ui.Text {
-		text = "Next",
-	}
-
-	size :: 4 * CUBE_SIZE
-
-	ui.block_init(&q.tetromino_container, .Vertical, Rect{0, 0, size, size}, allocator = allocator)
-	ui.block_init(&q.tetromino_block_container, .Vertical, allocator = allocator)
-
-	ui.block_add_child(&q.tetromino_block_container, &q.tetromino_container)
-
-	ui.block_init(&q.container, .Vertical, alignment = .Start, allocator = allocator)
-	ui.block_add_child(&q.container, &q.header)
-	ui.block_add_child(&q.container, &q.tetromino_block_container)
-
-	sp_queue_ui_layout(q, board_width, time_width, window_size)
-}
-
-sp_queue_ui_layout :: proc(q: ^SP_Queue_Ui, board_width, time_width: f32, window_size: Vec2) {
-	switch {
-	case window_size.x < SP_LAYOUT_SMALL_BP:
-		q.header.font_size = .Small
-		ui.text_layout(&q.header)
-
-		size :: 4 * CUBE_SIZE
-
-		spacing :: 10
-		padding :: 10
-
-		q.container.spacing = spacing
-		q.container.padding = padding
-
-		q.container.rect.z = board_width
-		q.container.rect.w =
-			q.header.rect.w + spacing + q.tetromino_block_container.rect.w + padding * 2
-
-		q.tetromino_block_container.rect.z = board_width - padding * 2
-	case:
-		q.header.font_size = .Medium
-		ui.text_layout(&q.header)
-
-		size :: 4 * CUBE_SIZE
-
-		padding :: 20
-		spacing :: 10
-
-		q.container.spacing = spacing
-		q.container.padding = padding
-
-		q.container.rect.zw = Vec2{time_width, 120}
-		q.tetromino_block_container.rect.z = time_width - padding * 2
-	}
-}
-
 Singleplayer :: struct {
-	perm_allocator:  runtime.Allocator,
-	temp_allocator:  runtime.Allocator,
-
-
-	// ui
-	header:          ui.Text,
-	countdown_texts: [3]ui.Text,
-	game_over_text:  ui.Text,
-	pause_button:    ui.Button,
-	arrows:          [4]ui.Button,
-	time_text:       ui.Text_Mono,
-	board:           ui.Block,
-	// score
-	score_block:     ui.Block,
-	score_header:    ui.Text,
-	score_text:      ui.Text_Mono,
-	// queue
-	queue_ui:        SP_Queue_Ui,
-
-	// ui clrs
-	clr_card_bg:     Color,
-	clr_card_border: Color,
-	clr_text_light:  Color,
-	clr_text_dark:   Color,
-	clr_accent:      Color,
+	window_size:               Vec2,
+	perm_allocator:            runtime.Allocator,
+	temp_allocator:            runtime.Allocator,
 
 	//
-	clock:           Clock,
-	state:           SingleplayerState,
-	countdown:       int,
-	cols, rows:      int,
-	queue:           SP_Queue,
-	tetromino:       Tetromino,
-	filled_cells:    [dynamic]Cube,
-	rows_score:      f64,
-	score:           f64,
+	score_arena:               mem.Arena,
+	score_data:                [size_of(rune) * 6]u8,
+	time_arena:                mem.Arena,
+	time_data:                 [size_of(rune) * 11]u8,
+	countdown_arena:           mem.Arena,
+	// don't know why but using an array of size 1 does not work
+	countdown_data:            [size_of(rune) * 2]u8,
+
+	// ui
+	layouts:                   [2]ui.Container,
+	layout_active:             int,
+	board:                     ui.Container,
+	action_button:             ui.Button,
+	arrows_buttons:            struct {
+		u: ui.Button,
+		d: ui.Button,
+		l: ui.Button,
+		r: ui.Button,
+	},
+	score_text, time_text:     ui.Text_Mono,
+	queue_container:           ui.Container,
+	queue_header:              ui.Text,
+	queue_container_t_wrapper: ui.Container,
+	queue_tetromino_block:     ui.Container,
+	//
+	board_text:                ui.Text,
+	ready_screen_container:    ui.Container,
+	clr_screen:                Color,
+
+	//
+	clock:                     Clock,
+	state:                     SingleplayerState,
+	countdown:                 int,
+	cols, rows:                int,
+	queue:                     SP_Queue,
+	tetromino:                 Tetromino,
+	filled_cells:              [dynamic]Cube,
+	rows_score:                f64,
+	score:                     f64,
 }
 
 sp_init :: proc(
 	sp: ^Singleplayer,
 	window_size: Vec2,
+	clr_screen: Color,
 	clr_card_bg: Color,
 	clr_card_border: Color,
 	clr_text_light: Color,
 	clr_text_dark: Color,
 	clr_accent: Color,
-	perm_allocator := context.allocator,
-	temp_allocator := context.temp_allocator,
+	perm_allocator, temp_allocator: runtime.Allocator,
 ) {
 	sp.perm_allocator = perm_allocator
 	sp.temp_allocator = temp_allocator
@@ -305,95 +246,354 @@ sp_init :: proc(
 	sp.rows = 20
 	sp.filled_cells = make([dynamic]Cube, sp.cols * sp.rows, perm_allocator)
 
-	sp.state = .Countdown
+	sp.state = .Ready
 	sp.countdown = 3
 
-	sp_queue_init(&sp.queue)
-	tetromino_init(&sp.tetromino, sp_queue_next(&sp.queue), sp)
+	mem.arena_init(&sp.score_arena, sp.score_data[:])
+	mem.arena_init(&sp.time_arena, sp.time_data[:])
+	mem.arena_init(&sp.countdown_arena, sp.countdown_data[:])
 
-	clock_init(&sp.clock, 1, 1)
-
-	sp.clr_card_bg = clr_card_bg
-	sp.clr_card_border = clr_card_border
-	sp.clr_text_light = clr_text_light
-	sp.clr_text_dark = clr_text_dark
-	sp.clr_accent = clr_accent
+	sp.clr_screen = clr_screen
 
 	//
 	// UI
 	//
 
-	ui.text_init(&sp.header, "Tetris classic", .Large)
+	board_size := Vec2{f32(sp.cols + 2) * CUBE_SIZE, f32(sp.rows + 2) * CUBE_SIZE}
 
-	ui.text_init(&sp.countdown_texts[0], "1", .Large)
-	ui.text_init(&sp.countdown_texts[1], "2", .Large)
-	ui.text_init(&sp.countdown_texts[2], "3", .Large)
+	{ 	// ready screen
+		sp.ready_screen_container = ui.Container {
+			perm_allocator = perm_allocator,
+			temp_allocator = temp_allocator,
+			rect           = {0, 0, board_size.x, board_size.y},
+			sizing         = {.Fixed, .Fixed},
+			direction      = .Horizontal,
+			alignment      = .Center,
+		}
 
-	ui.text_init(&sp.game_over_text, "Game over", .Large)
+		c1 := ui.container_init(
+			perm_allocator,
+			temp_allocator,
+			rect = {0, 0, board_size.x, 0},
+			sizing = {.Fixed, .Auto},
+			spacing = 5,
+			direction = .Vertical,
+			alignment = .Center,
+		)
+		ui.container_add_child(&sp.ready_screen_container, c1)
 
-	board_width := f32(sp.cols + 2) * CUBE_SIZE
-	board_height := f32(sp.rows + 2) * CUBE_SIZE
-	ui.block_init(&sp.board, .Vertical, Rect{0, 0, board_width, board_height})
+		header := new(ui.Text, perm_allocator)
+		header.value = "Ready to play?"
+		header.font_size = .Medium
+		header.appearance = {
+			flags = {.Background},
+			bg    = clr_text_light,
+		}
 
-	score_font_size: platform.Font_Size
-	pause_btn_size: Vec2
+		subheader := new(ui.Text, perm_allocator)
+		subheader.value = "Press Start"
+		subheader.font_size = .Small
+		subheader.appearance = {
+			flags = {.Background},
+			bg    = clr_text_light,
+		}
 
-	switch {
-	case window_size.x < SP_LAYOUT_SMALL_BP:
-		score_font_size = .Small
-		pause_btn_size = Vec2{board_width, 30}
-
-		ui.text_mono_init(&sp.time_text, "00:00:00.00", .Small)
-	case:
-		score_font_size = .Medium
-
-		ui.text_mono_init(&sp.time_text, "00:00:00.00", .Medium)
-		pause_btn_size = Vec2{sp.time_text.rect.z, 40}
+		ui.container_add_child(c1, header)
+		ui.container_add_child(c1, subheader)
 	}
 
-	ui.button_init(&sp.pause_button, pause_btn_size, "Pause")
+	// board text
+	sp.board_text.font_size = .Medium
+	sp.board_text.value = "3"
+	sp.board_text.appearance = {
+		flags  = {.Background, .Border},
+		bg     = clr_text_light,
+		border = clr_text_dark,
+	}
 
-	// score
 
-	ui.block_init(
-		&sp.score_block,
-		.Vertical,
-		Rect{0, 0, 120, 120},
-		padding = 20,
-		spacing = 10,
-		alignment = .Start,
-		allocator = perm_allocator,
-	)
+	header := new(ui.Text, perm_allocator)
+	header.value = "Tetris classic"
+	header.font_size = .Large
+	header.appearance = {
+		flags = {.Background},
+		bg    = clr_text_light,
+	}
 
-	ui.text_init(&sp.score_header, "Score", .Medium)
-	ui.block_add_child(&sp.score_block, &sp.score_header)
+	sp.board = ui.Container {
+		perm_allocator = perm_allocator,
+		temp_allocator = temp_allocator,
+		rect           = Rect{0, 0, board_size.x, board_size.y},
+		sizing         = {.Fixed, .Fixed},
+	}
 
-	ui.text_mono_init(&sp.score_text, "000000", score_font_size)
-	ui.block_add_child(&sp.score_block, &sp.score_text)
+	{ 	// queue
+		sp.queue_container = ui.Container {
+			perm_allocator = perm_allocator,
+			temp_allocator = temp_allocator,
+			sizing = {.Fixed, .Auto},
+			direction = .Vertical,
+			padding = Vec2{10, 5},
+			spacing = 10,
+			appearance = {
+				flags = {.Border, .Background},
+				border = clr_card_border,
+				bg = clr_card_bg,
+			},
+		}
 
-	sp_queue_ui_init(
-		&sp.queue_ui,
-		board_width,
-		sp.time_text.rect.z,
-		window_size,
-		allocator = perm_allocator,
-	)
+		sp.queue_header = ui.Text {
+			value = "Next",
+			appearance = {flags = {.Background}, bg = clr_text_light},
+		}
 
-	{ 	// arrows
-		arrows := [?]string{"u", "l", "r", "d"}
-		for a, i in arrows {
-			size :: 40
-			ui.button_init(&sp.arrows[i], Vec2{size, size}, a)
+		sp.queue_container_t_wrapper = ui.Container {
+			perm_allocator = perm_allocator,
+			temp_allocator = temp_allocator,
+			sizing         = {.Fixed, .Auto},
+			alignment      = .Center,
+			direction      = .Vertical,
+		}
+
+		sp.queue_tetromino_block = ui.Container {
+			perm_allocator = perm_allocator,
+			temp_allocator = temp_allocator,
+			rect           = Rect{0, 0, 4 * CUBE_SIZE, 3 * CUBE_SIZE},
+			sizing         = {.Fixed, .Fixed},
+		}
+		ui.container_add_child(&sp.queue_container_t_wrapper, &sp.queue_tetromino_block)
+
+		ui.container_add_child(&sp.queue_container, &sp.queue_header)
+		ui.container_add_child(&sp.queue_container, &sp.queue_container_t_wrapper)
+	}
+
+	sp.score_text = ui.Text_Mono {
+		value = "000000",
+		appearance = {flags = {.Background}, bg = clr_accent},
+	}
+
+	sp.time_text = ui.Text_Mono {
+		value = "00:00:00.00",
+		appearance = {flags = {.Background}, bg = clr_text_light},
+	}
+
+	arrow_size :: 35
+	arrows_texts := [?]string{"U", "L", "R", "D"}
+	arrows := [?]^ui.Button {
+		&sp.arrows_buttons.u,
+		&sp.arrows_buttons.l,
+		&sp.arrows_buttons.r,
+		&sp.arrows_buttons.d,
+	}
+	for a, i in arrows_texts {
+		arrows[i].text = a
+		arrows[i].rect = Rect{0, 0, arrow_size, arrow_size}
+		arrows[i].font_size = .Medium
+		arrows[i].button_appearance = {
+			flags  = {.Border, .Background},
+			border = clr_card_border,
+			bg     = clr_card_bg,
+		}
+		arrows[i].text_appearance = {
+			flags = {.Background},
+			bg    = clr_text_light,
 		}
 	}
+
+	sp.action_button = ui.Button {
+		rect = Rect{0, 0, board_size.x, 40},
+		text = "Start",
+		font_size = .Medium,
+		button_appearance = {flags = {.Background}, bg = clr_accent},
+		text_appearance = {flags = {.Background}, bg = clr_text_dark},
+	}
+
+	// SM
+
+	sp.layouts[0] = ui.Container {
+		perm_allocator = perm_allocator,
+		temp_allocator = temp_allocator,
+		sizing         = {.Full, .Auto},
+		direction      = .Vertical,
+		alignment      = .Center,
+		spacing        = 10,
+	}
+
+	ui.container_add_child(&sp.layouts[0], header)
+	ui.container_add_child(&sp.layouts[0], &sp.queue_container)
+
+	{
+		// score and time
+		score_and_time_container := ui.container_init(
+			perm_allocator,
+			temp_allocator,
+			rect = Rect{0, 0, board_size.x, 0},
+			sizing = {.Fixed, .Auto},
+			direction = .Horizontal,
+		)
+
+		score_container := ui.container_init(
+			perm_allocator,
+			temp_allocator,
+			rect = {0, 0, board_size.x / 2, 0},
+			sizing = {.Fixed, .Auto},
+		)
+		ui.container_add_child(score_container, &sp.score_text)
+
+		time_container := ui.container_init(
+			perm_allocator,
+			temp_allocator,
+			rect = {0, 0, board_size.x / 2, 0},
+			sizing = {.Fixed, .Auto},
+			direction = .Vertical,
+			alignment = .End,
+		)
+		ui.container_add_child(time_container, &sp.time_text)
+
+		ui.container_add_child(score_and_time_container, score_container)
+		ui.container_add_child(score_and_time_container, time_container)
+
+		ui.container_add_child(&sp.layouts[0], score_and_time_container)
+	}
+
+	ui.container_add_child(&sp.layouts[0], &sp.board)
+
+	{
+		arrows_container := ui.container_init(
+			perm_allocator,
+			temp_allocator,
+			direction = .Horizontal,
+			spacing = (sp.board.rect.z - arrow_size * 4) / 3,
+		)
+
+		ui.container_add_child(arrows_container, &sp.arrows_buttons.u)
+		ui.container_add_child(arrows_container, &sp.arrows_buttons.l)
+		ui.container_add_child(arrows_container, &sp.arrows_buttons.r)
+		ui.container_add_child(arrows_container, &sp.arrows_buttons.d)
+
+		ui.container_add_child(&sp.layouts[0], arrows_container)
+	}
+
+	ui.container_add_child(&sp.layouts[0], &sp.action_button)
+
+	// LG
+
+	sp.layouts[1] = ui.Container {
+		perm_allocator = perm_allocator,
+		temp_allocator = temp_allocator,
+		sizing         = {.Full, .Auto},
+		direction      = .Vertical,
+		alignment      = .Center,
+		spacing        = 50,
+	}
+
+	ui.container_add_child(&sp.layouts[1], header)
+
+	game_container := ui.container_init(
+		perm_allocator,
+		temp_allocator,
+		direction = .Horizontal,
+		spacing = 40,
+	)
+
+	side_panel_init :: proc(perm_allocator, temp_allocator: runtime.Allocator) -> ^ui.Container {
+		return ui.container_init(
+			perm_allocator,
+			temp_allocator,
+			sizing = {.Auto, .Auto},
+			direction = .Vertical,
+			spacing = 20,
+		)
+	}
+
+	left_side_container := side_panel_init(perm_allocator, temp_allocator)
+	side_panel_width :: 150
+
+	{
+		score_container := ui.container_init(
+			perm_allocator,
+			temp_allocator,
+			sizing = {.Fixed, .Auto},
+			rect = {0, 0, side_panel_width, 0},
+			direction = .Vertical,
+			padding = {10, 10},
+			spacing = 10,
+			appearance = {
+				flags = {.Background, .Border},
+				bg = clr_card_bg,
+				border = clr_card_border,
+			},
+		)
+
+		score_header := new(ui.Text, allocator = perm_allocator)
+		score_header.value = "Score"
+		score_header.font_size = .Medium
+		score_header.appearance = {
+			flags = {.Background},
+			bg    = clr_text_light,
+		}
+
+		ui.container_add_child(score_container, score_header)
+		ui.container_add_child(score_container, &sp.score_text)
+
+		ui.container_add_child(left_side_container, score_container)
+	}
+
+	{
+		arrows_container := ui.container_init(
+			perm_allocator,
+			temp_allocator,
+			sizing = {.Fixed, .Auto},
+			rect = {0, 0, side_panel_width, 0},
+			direction = .Vertical,
+			alignment = .Center,
+			spacing = 10,
+		)
+
+		ui.container_add_child(arrows_container, &sp.arrows_buttons.u)
+
+		bottom_row := ui.container_init(
+			perm_allocator,
+			temp_allocator,
+			sizing = {.Fixed, .Auto},
+			rect = {0, 0, side_panel_width, 0},
+			direction = .Horizontal,
+			alignment = .Center,
+			spacing = (side_panel_width - arrow_size * 3) / 2,
+		)
+
+		ui.container_add_child(bottom_row, &sp.arrows_buttons.l)
+		ui.container_add_child(bottom_row, &sp.arrows_buttons.d)
+		ui.container_add_child(bottom_row, &sp.arrows_buttons.r)
+
+		ui.container_add_child(arrows_container, bottom_row)
+
+		ui.container_add_child(left_side_container, arrows_container)
+	}
+
+	ui.container_add_child(game_container, left_side_container)
+	ui.container_add_child(game_container, &sp.board)
+
+	right_side_container := side_panel_init(perm_allocator, temp_allocator)
+	right_side_container.alignment = .End
+
+	ui.container_add_child(right_side_container, &sp.time_text)
+	ui.container_add_child(right_side_container, &sp.queue_container)
+	ui.container_add_child(right_side_container, &sp.action_button)
+
+	ui.container_add_child(game_container, right_side_container)
+
+	ui.container_add_child(&sp.layouts[1], game_container)
+
+	sp_layout(sp)
 }
 
-sp_reset :: proc(sp: ^Singleplayer, window_size: Vec2) {
+sp_start :: proc(sp: ^Singleplayer, window_size: Vec2, state: SingleplayerState = .Ready) {
 	for _, i in sp.filled_cells {
 		sp.filled_cells[i] = .None
 	}
 
-	sp.state = .Countdown
+	sp.state = state
 	sp.countdown = 3
 
 	sp_queue_init(&sp.queue)
@@ -402,156 +602,49 @@ sp_reset :: proc(sp: ^Singleplayer, window_size: Vec2) {
 
 	sp.rows_score = 0
 	sp.score = 0
+
+	sp.time_text.value = "00:00:00.00"
+	sp.score_text.value = "000000"
+
+	sp.window_size = window_size
+	sp_layout(sp)
 }
 
-sp_layout :: proc(sp: ^Singleplayer, window_size: Vec2) {
+sp_layout :: proc(sp: ^Singleplayer) {
 	switch {
-	case window_size.x < 700:
-		{ 	// heading
-			h := &sp.header
-			ui.text_init(h, "Tetris classic", .Large)
-			ui.center_horizontal_in_size(window_size, &h.rect)
-			h.rect.y = 20
-		}
+	case sp.window_size.x < 700:
+		sp.score_text.font_size = .Small
+		sp.time_text.font_size = .Small
 
-		// game container
-		container: ui.Block
-		ui.block_init(
-			&container,
-			.Vertical,
-			Rect{0, 80, 0, 0},
-			spacing = 20,
-			alignment = .Center,
-			allocator = sp.temp_allocator,
-		)
+		sp.queue_header.font_size = .Small
 
-		sp_queue_ui_layout(&sp.queue_ui, sp.board.rect.z, 0, window_size)
-		ui.block_add_child(&container, &sp.queue_ui.container)
+		board_width := sp.board.rect.z
+		sp.queue_container.rect.z = board_width
+		sp.queue_container_t_wrapper.rect.z = board_width
+		sp.action_button.rect.z = board_width
 
-		{ 	// time and score
-			sp.time_text.font_size = .Small
-			ui.text_mono_layout(&sp.time_text)
-
-			sp.score_text.font_size = .Small
-			ui.text_mono_layout(&sp.score_text)
-
-			spacing := sp.board.rect.z - sp.time_text.rect.z - sp.score_text.rect.z
-
-			c: ui.Block
-			ui.block_init(
-				&c,
-				.Horizontal,
-				Rect{},
-				spacing = spacing,
-				allocator = sp.temp_allocator,
-			)
-
-			ui.block_add_child(&c, &sp.score_text)
-			ui.block_add_child(&c, &sp.time_text)
-
-			ui.block_add_child(&container, &c)
-		}
-
-		// board
-
-		ui.block_add_child(&container, &sp.board)
-
-		defer {
-			for _, i in sp.countdown_texts {
-				ui.center(sp.board.rect, &sp.countdown_texts[i].rect)
-			}
-			ui.center(sp.board.rect, &sp.game_over_text.rect)
-		}
-
-
-		{ 	// arrows
-			arrow_block_size :: 40
-			spacing := (sp.board.rect.z - arrow_block_size * 4) / 3
-
-			arrows_container: ui.Block
-			ui.block_init(
-				&arrows_container,
-				.Horizontal,
-				Rect{0, 0, sp.board.rect.z, arrow_block_size},
-				spacing = spacing,
-				allocator = sp.temp_allocator,
-			)
-
-			for &a in sp.arrows {
-				ui.block_add_child(&arrows_container, &a)
-			}
-
-			ui.block_add_child(&container, &arrows_container)
-		}
-
-		// pause button
-		// TODO: Fix
-		ui.button_init(&sp.pause_button, Vec2{sp.board.rect.z, 30}, "Pause")
-		ui.block_add_child(&container, &sp.pause_button)
-
-		ui.center_horizontal(window_size, &container.rect)
-		ui.block_layout(&container)
-
+		sp.layout_active = 0
 	case:
-		// left side
-
 		sp.score_text.font_size = .Medium
-		ui.text_mono_layout(&sp.score_text)
-
-		left_side_layout: ui.Block
-		ui.block_init(
-			&left_side_layout,
-			.Vertical,
-			spacing = 30,
-			alignment = .Start,
-			allocator = sp.temp_allocator,
-		)
-		ui.block_add_child(&left_side_layout, &sp.score_block)
-
-		// right side
-
 		sp.time_text.font_size = .Medium
-		ui.text_mono_layout(&sp.time_text)
 
-		right_side_layout: ui.Block
-		ui.block_init(
-			&right_side_layout,
-			.Vertical,
-			spacing = 30,
-			alignment = .End,
-			allocator = sp.temp_allocator,
-		)
-		ui.block_add_child(&right_side_layout, &sp.time_text)
-		ui.block_add_child(&right_side_layout, &sp.queue_ui.container)
+		sp.queue_header.font_size = .Medium
 
+		sp.queue_container.rect.z = 150
+		sp.queue_container_t_wrapper.rect.z = 150 - sp.queue_container.padding.x * 2
+		sp.action_button.rect.z = 150
 
-		ui.block_add_child(&right_side_layout, &sp.pause_button)
-
-		// layout
-
-		layout: ui.Block
-		ui.block_init(
-			&layout,
-			.Horizontal,
-			spacing = 30,
-			alignment = .Start,
-			allocator = sp.temp_allocator,
-		)
-
-		ui.block_add_child(&layout, &left_side_layout)
-		ui.block_add_child(&layout, &sp.board)
-		ui.block_add_child(&layout, &right_side_layout)
-
-		ui.center(window_size, &layout.rect)
-		ui.block_layout(&layout)
-
-		// countdown
-		ui.center(sp.board.rect, &sp.countdown_texts[0].rect)
-		ui.center(sp.board.rect, &sp.countdown_texts[1].rect)
-		ui.center(sp.board.rect, &sp.countdown_texts[2].rect)
-
-		ui.center(sp.board.rect, &sp.game_over_text.rect)
+		sp.layout_active = 1
 	}
+
+	ui.container_layout(&sp.layouts[sp.layout_active], sp.window_size)
+
+	sp.ready_screen_container.rect.xy =
+		sp.board.rect.xy + sp.board.rect.zw / 2 - sp.ready_screen_container.rect.zw / 2
+	ui.container_layout(&sp.ready_screen_container, Vec2{})
+
+	ui.text_compute_size(&sp.board_text)
+	sp.board_text.rect.xy = sp.board.rect.xy + sp.board.rect.zw / 2 - sp.board_text.rect.zw / 2
 }
 
 is_cell_filled :: proc(coords: Coords, sp: ^Singleplayer) -> (filled: bool) {
@@ -569,6 +662,12 @@ sp_update :: proc(sp: ^Singleplayer) {
 		if clock := &sp.clock; clock.last_update + clock.time_step < clock.time {
 			sp.countdown -= 1
 			updated = true
+
+			countdown_arena := mem.arena_allocator(&sp.countdown_arena)
+			free_all(countdown_arena)
+			sp.board_text.value = fmt.aprintf("%d", sp.countdown, allocator = countdown_arena)
+
+			sp_layout(sp)
 		}
 
 		if sp.countdown == 0 {
@@ -592,7 +691,11 @@ sp_update :: proc(sp: ^Singleplayer) {
 				for c in tetromino_abs_coords(t.coords, t.pos) do if is_cell_filled(c, sp) {
 					t.kind = .None
 					sp.state = .GameOver
-					clock_pause(&sp.clock)
+
+					sp.board_text.value = "Game over"
+					sp.action_button.text = "Play again"
+					sp_layout(sp)
+
 					break
 				}
 
@@ -657,12 +760,34 @@ sp_update :: proc(sp: ^Singleplayer) {
 
 
 			sp.score = max(0, sp.rows_score + sp.clock.time - 3)
+
+			score_allocator := mem.arena_allocator(&sp.score_arena)
+			free_all(score_allocator)
+			sp.score_text.value = fmt.aprintf("%06.0f", sp.score, allocator = score_allocator)
+
 			return
+		}
+
+		{
+			time_allocator := mem.arena_allocator(&sp.time_arena)
+			free_all(time_allocator)
+
+			total := int(sp.clock.time) - 3
+			hours := total / 3600
+			minutes := (total / 60) % 60
+			seconds := (sp.clock.time - 3) - f64(total) + f64(total % 60)
+
+			sp.time_text.value = fmt.aprintf(
+				"%02d:%02d:%05.2f",
+				hours,
+				minutes,
+				seconds,
+				allocator = time_allocator,
+			)
 		}
 
 		updated = update_game(sp)
 	case .GameOver:
-		sp.pause_button.text = "Play again"
 	}
 
 	if updated {
@@ -670,9 +795,10 @@ sp_update :: proc(sp: ^Singleplayer) {
 	}
 }
 
-sp_draw :: proc(sp: ^Singleplayer, window_size: Vec2) {
-	// header
-	ui.text_draw(&sp.header, clr_bg = sp.clr_text_light)
+sp_draw :: proc(sp: ^Singleplayer) {
+	platform.fill_rect(&Rect{0, 0, sp.window_size.x, sp.window_size.y}, &sp.clr_screen)
+
+	ui.container_draw(&sp.layouts[sp.layout_active])
 
 	{ 	// board
 		// horizontal walls
@@ -703,7 +829,7 @@ sp_draw :: proc(sp: ^Singleplayer, window_size: Vec2) {
 			return
 		}
 
-		if sp.state != .Countdown {
+		if sp.state == .Game || sp.state == .Paused || sp.state == .GameOver {
 			if sp.tetromino.kind != .None {
 				// tetromino
 				t := &sp.tetromino
@@ -728,177 +854,190 @@ sp_draw :: proc(sp: ^Singleplayer, window_size: Vec2) {
 			pos := game_coords_to_world_pos(Coords{col, row}, sp)
 			draw_cube(cell, pos)
 		}
+	}
 
-		if sp.state == .Countdown {
-			text := &sp.countdown_texts[sp.countdown - 1]
-			ui.text_draw(text, clr_bg = sp.clr_text_light)
+	// queue
+	if sp.state == .Game || sp.state == .Paused || sp.state == .GameOver {
+		next := sp.queue.bag[sp.queue.index]
+		for c in tetromino_coords[next][0] {
+			pos := sp.queue_tetromino_block.rect.xy + coords_vec(c) * CUBE_SIZE
+			draw_cube(tetromino_cubes[next], pos)
 		}
 	}
 
-	{ 	// time
-		#partial switch sp.state {
-		case .Countdown:
-			sp.time_text.text = "00:00:00.00"
-		case .Game, .Paused, .GameOver:
-			total := int(sp.clock.time) - 3
-			hours := total / 3600
-			minutes := (total / 60) % 60
-			seconds := (sp.clock.time - 3) - f64(total) + f64(total % 60)
-			text := fmt.aprintf(
-				"%02d:%02d:%05.2f",
-				hours,
-				minutes,
-				seconds,
-				allocator = sp.temp_allocator,
-			)
-			sp.time_text.text = text
-		}
-
-		ui.text_mono_draw(&sp.time_text, clr_bg = sp.clr_text_light)
+	if sp.state == .Ready {
+		ui.container_draw(&sp.ready_screen_container)
 	}
 
-	{ 	// pause button
-		clr_bg, clr_text: Color
-		#partial switch sp.state {
-		case .Paused, .GameOver:
-			clr_bg = sp.clr_accent
-			clr_text = sp.clr_text_dark
-		case:
-			clr_bg = sp.clr_card_border
-			clr_text = sp.clr_text_light
-
-		}
-		ui.button_draw(&sp.pause_button, .Medium, clr_btn_bg = clr_bg, clr_text_bg = clr_text)
-	}
-
-	{ 	// score
-		if window_size.x > SP_LAYOUT_SMALL_BP {
-			ui.draw_rect(
-				sp.score_block.rect,
-				ui.Modifiers_Flags{.Background, .Border},
-				clr_bg = sp.clr_card_bg,
-				clr_border = sp.clr_card_border,
-			)
-			ui.text_draw(&sp.score_header, clr_bg = sp.clr_text_light)
-		}
-
-		sp.score_text.text = fmt.aprintf("%06.0f", sp.score, allocator = sp.temp_allocator)
-		ui.text_mono_draw(&sp.score_text, clr_bg = sp.clr_accent)
-	}
-
-	{ 	// queue
-		ui.draw_rect(
-			sp.queue_ui.container.rect,
-			ui.Modifiers_Flags{.Background, .Border},
-			clr_bg = sp.clr_card_bg,
-			clr_border = sp.clr_card_border,
-		)
-
-		ui.text_draw(&sp.queue_ui.header, clr_bg = sp.clr_text_light)
-
-		if sp.state != .Countdown {
-			next := sp.queue.bag[sp.queue.index]
-			for c in tetromino_coords[next][0] {
-				pos := sp.queue_ui.tetromino_container.rect.xy + coords_vec(c) * CUBE_SIZE
-				draw_cube(tetromino_cubes[next], pos)
-			}
-		}
-	}
-
-	if sp.state == .GameOver {
-		ui.text_draw(
-			&sp.game_over_text,
-			ui.Modifiers_Flags{.Border, .Background},
-			clr_bg = sp.clr_text_light,
-			clr_border = sp.clr_card_bg,
-		)
-	}
-
-	// arrows
-	for &a in sp.arrows {
-		ui.button_draw(
-			&a,
-			.Medium,
-			btn_modifiers = ui.Modifiers_Flags{.Border, .Background},
-			clr_btn_bg = sp.clr_card_bg,
-			clr_btn_border = sp.clr_card_border,
-			clr_text_bg = sp.clr_text_light,
-		)
+	if sp.state == .Countdown || sp.state == .Paused || sp.state == .GameOver {
+		ui.text_draw(&sp.board_text)
 	}
 }
 
-sp_process_event :: proc(sp: ^Singleplayer, event: ^platform.Event) {
-	if sp.state == .Game {
-		#partial switch event.kind {
-		case .Keydown:
-			#partial switch event.keyboard.key {
-			case .DOWN:
-				sp.clock.multiplier = 20
-			case .UP:
-				if sp.tetromino.kind != .None {
-					tetromino_rotate(&sp.tetromino, sp)
-				}
-			case .LEFT:
-				if sp.tetromino.kind != .None {
-					t := &sp.tetromino
-					t.pos.col -= 1
-					collision := false
 
-					// check collision with left side and filled cells
-					for c in tetromino_abs_coords(t.coords, t.pos) do if c.col < 0 || is_cell_filled(c, sp) {
-						collision = true
-						break
-					}
+sp_update_and_draw :: proc(
+	sp: ^Singleplayer,
+	events: [dynamic]platform.Event,
+	mouse: platform.Mouse,
+	delta_time: f64,
+) {
+	if sp.state != .Ready && sp.state != .GameOver && sp.state != .Paused {
+		clock_frame_start(&sp.clock, delta_time)
+	}
 
-					// revert if collision
-					if collision {
-						t.pos.col += 1
-					} else {
-						tetromino_project(t, sp)
-					}
-				}
-			case .RIGHT:
-				if sp.tetromino.kind != .None {
-					t := &sp.tetromino
-					t.pos.col += 1
-					collision := false
+	sp_handle_keydown_pressed :: proc(sp: ^Singleplayer) {
+		sp.clock.multiplier = 20
+	}
 
-					// check collision with right side and filled cells
-					for c in tetromino_abs_coords(t.coords, t.pos) do if c.col >= sp.cols || is_cell_filled(c, sp) {
-						collision = true
-						break
-					}
+	sp_handle_keyleft :: proc(sp: ^Singleplayer) {
+		if sp.tetromino.kind != .None {
+			t := &sp.tetromino
+			t.pos.col -= 1
+			collision := false
 
-					// revert if collision
-					if collision {
-						t.pos.col -= 1
-					} else {
-						tetromino_project(t, sp)
-					}
-				}
+			// check collision with left side and filled cells
+			for c in tetromino_abs_coords(t.coords, t.pos) do if c.col < 0 || is_cell_filled(c, sp) {
+				collision = true
+				break
 			}
-		case .Keyup:
-			#partial switch event.keyboard.key {
-			case .DOWN:
-				sp.clock.multiplier = sp.clock.base_multiplier
+
+			// revert if collision
+			if collision {
+				t.pos.col += 1
+			} else {
+				tetromino_project(t, sp)
 			}
 		}
 	}
 
-}
+	sp_handle_keyright :: proc(sp: ^Singleplayer) {
+		if sp.tetromino.kind != .None {
+			t := &sp.tetromino
+			t.pos.col += 1
+			collision := false
 
-sp_pause_button_click :: proc(sp: ^Singleplayer, window_size: Vec2) {
-	#partial switch sp.state {
-	case .Game:
-		sp.pause_button.text = "resume"
-		sp.state = .Paused
-		clock_pause(&sp.clock)
-	case .Paused:
-		sp.pause_button.text = "pause"
-		sp.state = .Game
-		clock_resume(&sp.clock)
-	case .GameOver:
-		sp.pause_button.text = "pause"
-		sp_reset(sp, window_size)
+			// check collision with right side and filled cells
+			for c in tetromino_abs_coords(t.coords, t.pos) do if c.col >= sp.cols || is_cell_filled(c, sp) {
+				collision = true
+				break
+			}
+
+			// revert if collision
+			if collision {
+				t.pos.col -= 1
+			} else {
+				tetromino_project(t, sp)
+			}
+		}
 	}
+
+	sp_handle_keyup :: proc(sp: ^Singleplayer) {
+		if sp.tetromino.kind != .None {
+			tetromino_rotate(&sp.tetromino, sp)
+		}
+	}
+
+	sp_process_event :: proc(sp: ^Singleplayer, event: platform.Event) {
+		if event.kind == .Resize {
+			sp.window_size = event.resize.size
+			sp_layout(sp)
+			return
+		}
+
+		if sp.state == .Game {
+			#partial switch event.kind {
+			case .Keydown:
+				#partial switch event.keyboard.key {
+				case .DOWN:
+					sp_handle_keydown_pressed(sp)
+				case .UP:
+					sp_handle_keyup(sp)
+				case .LEFT:
+					sp_handle_keyleft(sp)
+				case .RIGHT:
+					sp_handle_keyright(sp)
+				}
+			case .Keyup:
+				#partial switch event.keyboard.key {
+				case .DOWN:
+					sp.clock.multiplier = sp.clock.base_multiplier
+				}
+			}
+		}
+	}
+
+
+	for event in events {
+		sp_process_event(sp, event)
+	}
+
+
+	#partial switch mouse.state {
+	case .Click:
+		if ui.rect_collides(sp.action_button.rect, mouse.pos) {
+			#partial switch sp.state {
+			case .Ready:
+				// ready -> game
+
+				clock_init(&sp.clock, 1, 1)
+
+				sp_queue_init(&sp.queue)
+				tetromino_init(&sp.tetromino, sp_queue_next(&sp.queue), sp)
+
+				sp.action_button.text = "Pause"
+
+				sp.state = .Countdown
+				sp.countdown = 3
+				sp_layout(sp)
+			case .Game:
+				// game -> paused
+
+				sp.action_button.text = "Resume"
+
+				sp.state = .Paused
+				sp.board_text.value = "Paused"
+				sp_layout(sp)
+			case .Paused:
+				// paused -> game
+				sp.state = .Game
+				sp.action_button.text = "Pause"
+				sp_layout(sp)
+			case .GameOver:
+				sp.action_button.text = "Pause"
+				sp.board_text.value = "3"
+				sp_layout(sp)
+				sp_start(sp, sp.window_size, .Countdown)
+			}
+		}
+
+		if sp.state == .Game {
+			// switch {
+			// case ui.rect_collides(sp.arrows_buttons.u.rect, mouse.pos):
+			// 	sp_handle_keyup(sp)
+			// case ui.rect_collides(sp.arrows_buttons.l.rect, mouse.pos):
+			// 	sp_handle_keyleft(sp)
+			// case ui.rect_collides(sp.arrows_buttons.d.rect, mouse.pos):
+			// case ui.rect_collides(sp.arrows_buttons.r.rect, mouse.pos):
+			// 	sp_handle_keyright(sp)
+			// }
+		}
+
+
+	case .Pressed:
+		if sp.state == .Game {
+			// switch {
+			// case ui.rect_collides(sp.arrows_buttons.u.rect, mouse.pos):
+			// 	sp_handle_keyup(sp)
+			// case ui.rect_collides(sp.arrows_buttons.l.rect, mouse.pos):
+			// 	sp_handle_keyleft(sp)
+			// case ui.rect_collides(sp.arrows_buttons.d.rect, mouse.pos):
+			// case ui.rect_collides(sp.arrows_buttons.r.rect, mouse.pos):
+			// 	sp_handle_keyright(sp)
+			// }
+		}
+	}
+
+
+	sp_update(sp)
+	sp_draw(sp)
 }
