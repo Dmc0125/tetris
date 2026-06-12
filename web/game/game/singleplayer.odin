@@ -971,8 +971,11 @@ sp_update_and_draw :: proc(
 		sp_process_event(sp, event)
 	}
 
-
 	#partial switch mouse.state {
+	case .None:
+		if sp.clock.multiplier == 20 {
+			sp.clock.multiplier = sp.clock.base_multiplier
+		}
 	case .Click:
 		if ui.rect_collides(sp.action_button.rect, mouse.pos) {
 			#partial switch sp.state {
@@ -1011,18 +1014,17 @@ sp_update_and_draw :: proc(
 		}
 
 		if sp.state == .Game {
-			// switch {
-			// case ui.rect_collides(sp.arrows_buttons.u.rect, mouse.pos):
-			// 	sp_handle_keyup(sp)
-			// case ui.rect_collides(sp.arrows_buttons.l.rect, mouse.pos):
-			// 	sp_handle_keyleft(sp)
-			// case ui.rect_collides(sp.arrows_buttons.d.rect, mouse.pos):
-			// case ui.rect_collides(sp.arrows_buttons.r.rect, mouse.pos):
-			// 	sp_handle_keyright(sp)
-			// }
+			switch {
+			case ui.rect_collides(sp.arrows_buttons.u.rect, mouse.pos):
+				sp_handle_keyup(sp)
+			case ui.rect_collides(sp.arrows_buttons.l.rect, mouse.pos):
+				sp_handle_keyleft(sp)
+			case ui.rect_collides(sp.arrows_buttons.d.rect, mouse.pos):
+				sp_handle_keydown_pressed(sp)
+			case ui.rect_collides(sp.arrows_buttons.r.rect, mouse.pos):
+				sp_handle_keyright(sp)
+			}
 		}
-
-
 	case .Pressed:
 		if sp.state == .Game {
 			// switch {

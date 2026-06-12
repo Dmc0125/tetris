@@ -81,6 +81,15 @@ async function main() {
         mouseBtn = e.buttons
     })
 
+    window.addEventListener("touchstart", function(/** @type {TouchEvent} */e) {
+        mousex = e.touches[0].clientX
+        mousey = e.touches[0].clientY
+        mouseBtn = 1
+    })
+    window.addEventListener("touchend", function() {
+        mouseBtn = 0
+    })
+
     const maxEventsCount = 512
     /** @type {ArrayBuffer[]} */
     const events = []
